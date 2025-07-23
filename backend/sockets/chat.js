@@ -7,8 +7,10 @@ const { jwtSecret } = require('../config/keys');
 const redisClient = require('../utils/redisClient');
 const SessionService = require('../services/sessionService');
 const aiService = require('../services/aiService');
+const MESSAGES_TTL = 24 * 60 * 60; // 24 hours
 
 const RECENT_MESSAGE_CACHE = 50;
+const CHAT_MESSAGE_TTL = 24 * 60 * 60; // 24 hours
 
 module.exports = function(io) {
   const connectedUsers = new Map();
@@ -45,6 +47,7 @@ module.exports = function(io) {
         // Only use cache for most recent messages
         cachedMessages = await redisClient.get(`room:messages:${roomId}`) || [];
         if (cachedMessages.length >= limit) {
+          console.log('캐시 HIT', roomId, cachedMessages.length);
           const sortedMessages = cachedMessages.slice(-limit);
           return {
             messages: sortedMessages,
@@ -52,6 +55,7 @@ module.exports = function(io) {
             oldestTimestamp: sortedMessages[0]?.timestamp || null
           };
         }
+        console.log('캐시 MISS', roomId, cachedMessages.length);
       }
 
       // 쿼리 구성
@@ -104,7 +108,7 @@ module.exports = function(io) {
 
       if (!before && messages.length > 0) {
         // Cache the most recent messages
-        await redisClient.setEx(`room:messages:${roomId}`, 30, messages.slice(0, RECENT_MESSAGE_CACHE));
+        await redisClient.setEx(`room:messages:${roomId}`, CHAT_MESSAGE_TTL, messages.slice(0, RECENT_MESSAGE_CACHE));
       }
 
       return {
@@ -571,7 +575,11 @@ module.exports = function(io) {
         let cached = await redisClient.get(cacheKey) || [];
         cached.push(message.toObject ? message.toObject() : message);
         if (cached.length > RECENT_MESSAGE_CACHE) cached = cached.slice(-RECENT_MESSAGE_CACHE);
-        await redisClient.setEx(cacheKey, 30, cached);
+        await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
+
+        // // Publish to Redis Pub/Sub instead of direct emit
+        // await redisPub.publish(PUBSUB_CHANNEL, JSON.stringify({ room, message }));
+        // // Do not emit directly here; handled by subscriber
 
         io.to(room).emit('message', message);
 
