@@ -129,7 +129,7 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// 프로필 업데이트
+// 프로필 닉네임 업데이트
 exports.updateProfile = async (req, res) => {
   try {
     const { name } = req.body;
@@ -168,6 +168,55 @@ exports.updateProfile = async (req, res) => {
     res.status(500).json({
       success: false,
       message: '프로필 업데이트 중 오류가 발생했습니다.'
+    });
+  }
+};
+
+// 프로필 비밀번호 변경
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    // 1. 필드 유효성 검사
+    if (!currentPassword || !newPassword || currentPassword.trim().length === 0 || newPassword.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '현재 비밀번호와 새 비밀번호를 모두 입력해주세요.'
+      });
+    }
+
+    // 2. 사용자 조회
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: '사용자를 찾을 수 없습니다.'
+      });
+    }
+
+    // 3. 현재 비밀번호 확인
+    const isMatch = await user.matchPassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: '현재 비밀번호가 일치하지 않습니다.'
+      });
+    }
+
+    // 4. 새 비밀번호 저장
+    user.password = newPassword;
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: '비밀번호가 성공적으로 변경되었습니다.'
+    });
+
+  } catch (error) {
+    console.error('Change password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: '비밀번호 변경 중 오류가 발생했습니다.'
     });
   }
 };

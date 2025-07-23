@@ -15,10 +15,16 @@ router.get('/profile',
   userController.getProfile
 );
 
-// 프로필 업데이트
+// 프로필 닉네임 업데이트
 router.put('/profile',
   auth,
   userController.updateProfile
+);
+
+// 프로필 비밀번호 업데이트
+router.put('/profile-password',
+  auth,
+  userController.changePassword
 );
 
 // 프로필 이미지 업로드
