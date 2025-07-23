@@ -8,6 +8,8 @@ const redisClient = require('../utils/redisClient');
 const SessionService = require('../services/sessionService');
 const aiService = require('../services/aiService');
 
+const RECENT_MESSAGE_CACHE = 50;
+
 module.exports = function(io) {
   const connectedUsers = new Map();
   const streamingSessions = new Map();
@@ -38,6 +40,20 @@ module.exports = function(io) {
     });
 
     try {
+      let cachedMessages = [];
+      if (!before) {
+        // Only use cache for most recent messages
+        cachedMessages = await redisClient.get(`room:messages:${roomId}`) || [];
+        if (cachedMessages.length >= limit) {
+          const sortedMessages = cachedMessages.slice(-limit);
+          return {
+            messages: sortedMessages,
+            hasMore: cachedMessages.length > limit,
+            oldestTimestamp: sortedMessages[0]?.timestamp || null
+          };
+        }
+      }
+
       // 쿼리 구성
       const query = { room: roomId };
       if (before) {
@@ -84,6 +100,11 @@ module.exports = function(io) {
         ).exec().catch(error => {
           console.error('Read status update error:', error);
         });
+      }
+
+      if (!before && messages.length > 0) {
+        // Cache the most recent messages
+        await redisClient.setEx(`room:messages:${roomId}`, 30, messages.slice(0, RECENT_MESSAGE_CACHE));
       }
 
       return {
@@ -544,6 +565,13 @@ module.exports = function(io) {
           { path: 'sender', select: 'name email profileImage' },
           { path: 'file', select: 'filename originalname mimetype size' }
         ]);
+
+        // Update Redis cache for recent messages
+        const cacheKey = `room:messages:${room}`;
+        let cached = await redisClient.get(cacheKey) || [];
+        cached.push(message.toObject ? message.toObject() : message);
+        if (cached.length > RECENT_MESSAGE_CACHE) cached = cached.slice(-RECENT_MESSAGE_CACHE);
+        await redisClient.setEx(cacheKey, 30, cached);
 
         io.to(room).emit('message', message);
 

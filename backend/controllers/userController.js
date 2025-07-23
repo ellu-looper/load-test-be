@@ -3,6 +3,7 @@ const User = require('../models/User');
 const { upload } = require('../middleware/upload');
 const path = require('path');
 const fs = require('fs').promises;
+const redisClient = require('../utils/redisClient');
 
 // 회원가입
 exports.register = async (req, res) => {
@@ -99,6 +100,11 @@ exports.register = async (req, res) => {
 // 프로필 조회
 exports.getProfile = async (req, res) => {
   try {
+    const cacheKey = `user:profile:${req.user.id}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return res.json({ success: true, user: cached });
+    }
     const user = await User.findById(req.user.id).select('-password');
     if (!user) {
       return res.status(404).json({
@@ -106,17 +112,14 @@ exports.getProfile = async (req, res) => {
         message: '사용자를 찾을 수 없습니다.'
       });
     }
-
-    res.json({
-      success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        profileImage: user.profileImage
-      }
-    });
-
+    const userProfile = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      profileImage: user.profileImage
+    };
+    await redisClient.setEx(cacheKey, 60, userProfile);
+    res.json({ success: true, user: userProfile });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({
