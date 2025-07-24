@@ -485,6 +485,7 @@ module.exports = function(io) {
         }
 
         socket.join(roomId);
+        console.log(`User ${socket.user.id} (${socket.user.name}) joined Socket.IO room ${roomId}`);
         // [Redis Migration] 새로운 방 정보 저장 (Redis)
         await redisClient.set('userRoom:' + socket.user.id, roomId);
 
@@ -672,6 +673,7 @@ module.exports = function(io) {
         await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
 
         // Direct socket emission - pub/sub removed for load testing
+        console.log(`Broadcasting message to room ${room}, connected sockets:`, io.sockets.adapter.rooms.get(room)?.size || 0);
         io.to(room).emit('message', message);
 
         // AI 멘션이 있는 경우 AI 응답 생성
