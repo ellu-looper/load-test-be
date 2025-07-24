@@ -121,7 +121,12 @@ class RedisClient {
             connectTimeout: 10000,
             lazyConnect: true,
             keepAlive: 30000,
-            family: 4
+            family: 4,
+            socket: {
+              family: 4,
+              keepAlive: true,
+              noDelay: true
+            }
           },
           useReplicas: true,
           enableAutoPipelining: true,
