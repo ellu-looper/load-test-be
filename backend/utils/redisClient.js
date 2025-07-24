@@ -110,12 +110,9 @@ class RedisClient {
       if (this.isCluster && clusterNodes.length > 1) {
         console.log('Connecting to Redis Cluster...', clusterNodes);
         
-        this.client = new Redis.Cluster(clusterNodes, {
-          enableOfflineQueue: false,
-          retryDelayOnFailover: 100,
-          maxRetriesPerRequest: 3,
-          scaleReads: 'slave',
-          redisOptions: {
+        this.client = Redis.createCluster({
+          rootNodes: clusterNodes,
+          defaults: {
             connectTimeout: 5000,
             lazyConnect: true,
             keepAlive: 30000,
