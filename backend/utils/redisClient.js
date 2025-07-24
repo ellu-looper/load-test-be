@@ -1,5 +1,5 @@
 // backend/utils/redisClient.js
-const Redis = require('redis');
+const Redis = require('ioredis');
 const { redisHost, redisPort } = require('../config/keys');
 
 // Redis Cluster configuration - Force cluster mode in production
@@ -113,46 +113,40 @@ class RedisClient {
 
     try {
       if (this.isCluster && clusterNodes.length > 1) {
-        console.log('Connecting to Redis Cluster...', clusterNodes);
+        console.log('Connecting to Redis Cluster with ioredis...', clusterNodes);
+        console.log('DEBUG: Creating cluster with nodes:', JSON.stringify(clusterNodes, null, 2));
         
-        // For load testing - use single Redis connection with round-robin
-        // This avoids cluster mode networking issues entirely
-        this.nodeIndex = 0;
-        this.allNodes = clusterNodes;
+        // ioredis cluster syntax - much better cluster support
+        const startupNodes = clusterNodes.map(node => ({
+          host: node.host,
+          port: node.port
+        }));
         
-        const currentNode = clusterNodes[this.nodeIndex % clusterNodes.length];
-        console.log(`Using Redis node: ${currentNode.host}:${currentNode.port}`);
-        
-        this.client = Redis.createClient({
-          socket: {
-            host: currentNode.host,
-            port: currentNode.port,
-            connectTimeout: 10000,
+        this.client = new Redis.Cluster(startupNodes, {
+          redisOptions: {
             family: 4,
-            keepAlive: true
+            keepAlive: 30000,
+            connectTimeout: 10000,
+            lazyConnect: false
           },
-          retryDelayOnFailover: 100,
-          enableAutoPipelining: true,
+          enableOfflineQueue: true,
+          enableReadyCheck: true,
+          scaleReads: 'slave',
           maxRetriesPerRequest: 3
         });
       } else {
-        console.log('Connecting to Redis single instance...');
+        console.log('Connecting to Redis single instance with ioredis...');
         
-        this.client = Redis.createClient({
-          url: `redis://${redisHost}:${redisPort}`,
-          socket: {
-            host: redisHost,
-            port: redisPort,
-            connectTimeout: 5000,
-            keepAlive: 30000,
-            reconnectStrategy: (retries) => {
-              if (retries > this.maxRetries) {
-                console.error('Max Redis reconnection attempts reached');
-                return false;
-              }
-              return Math.min(retries * 100, 3000);
-            }
-          }
+        this.client = new Redis({
+          host: redisHost,
+          port: redisPort,
+          family: 4,
+          keepAlive: 30000,
+          connectTimeout: 5000,
+          lazyConnect: true,
+          retryDelayOnFailover: 100,
+          enableOfflineQueue: false,
+          maxRetriesPerRequest: this.maxRetries
         });
       }
 
@@ -185,7 +179,7 @@ class RedisClient {
         });
       }
 
-      await this.client.connect();
+      // ioredis connects automatically, no need for explicit connect()
       return this.client;
 
     } catch (error) {
@@ -222,7 +216,7 @@ class RedisClient {
       }
 
       if (options.ttl) {
-        return await this.client.setEx(key, options.ttl, stringValue);
+        return await this.client.setex(key, options.ttl, stringValue);
       }
       return await this.client.set(key, stringValue);
     } catch (error) {
@@ -262,7 +256,7 @@ class RedisClient {
       }
 
       if (this.useMock) {
-        return await this.client.setEx(key, seconds, value);
+        return await this.client.setex(key, seconds, value);
       }
 
       let stringValue;
@@ -272,7 +266,7 @@ class RedisClient {
         stringValue = String(value);
       }
 
-      return await this.client.setEx(key, seconds, stringValue);
+      return await this.client.setex(key, seconds, stringValue);
     } catch (error) {
       console.error('Redis setEx error:', error);
       throw error;
