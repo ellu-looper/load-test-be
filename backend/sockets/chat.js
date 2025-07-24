@@ -15,9 +15,9 @@ const { redisPub, redisSub } = require('../utils/redisClient');
 const PUBSUB_CHANNEL = 'chat:messages';
 
 module.exports = function(io) {
-  const connectedUsers = new Map(); // [Redis Migration] Redis로 대체
+  // const connectedUsers = new Map(); // [Redis Migration] Redis로 대체
   const streamingSessions = new Map();
-  const userRooms = new Map();
+  // const userRooms = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
   const messageQueues = new Map();
   const messageLoadRetries = new Map();
   const BATCH_SIZE = 30;  // 한 번에 로드할 메시지 수
@@ -443,8 +443,8 @@ module.exports = function(io) {
           throw new Error('Unauthorized');
         }
 
-        // 이미 해당 방에 참여 중인지 확인
-        const currentRoom = userRooms.get(socket.user.id);
+        // [Redis Migration] 이미 해당 방에 참여 중인지 확인 (Redis)
+        const currentRoom = await redisClient.get('userRoom:' + socket.user.id);
         if (currentRoom === roomId) {
           logDebug('already in room', {
             userId: socket.user.id,
@@ -454,14 +454,14 @@ module.exports = function(io) {
           return;
         }
 
-        // 기존 방에서 나가기
+        // [Redis Migration] 기존 방에서 나가기 (Redis)
         if (currentRoom) {
           logDebug('leaving current room', { 
             userId: socket.user.id, 
             roomId: currentRoom 
           });
           socket.leave(currentRoom);
-          userRooms.delete(socket.user.id);
+          await redisClient.del('userRoom:' + socket.user.id);
           
           socket.to(currentRoom).emit('userLeft', {
             userId: socket.user.id,
@@ -484,7 +484,8 @@ module.exports = function(io) {
         }
 
         socket.join(roomId);
-        userRooms.set(socket.user.id, roomId);
+        // [Redis Migration] 새로운 방 정보 저장 (Redis)
+        await redisClient.set('userRoom:' + socket.user.id, roomId);
 
         // 입장 메시지 생성
         const joinMessage = new Message({
@@ -717,8 +718,8 @@ module.exports = function(io) {
           throw new Error('Unauthorized');
         }
 
-        // 실제로 해당 방에 참여 중인지 먼저 확인
-        const currentRoom = userRooms?.get(socket.user.id);
+        // [Redis Migration] 실제로 해당 방에 참여 중인지 먼저 확인 (Redis)
+        const currentRoom = await redisClient.get('userRoom:' + socket.user.id);
         if (!currentRoom || currentRoom !== roomId) {
           console.log(`User ${socket.user.id} is not in room ${roomId}`);
           return;
@@ -736,7 +737,8 @@ module.exports = function(io) {
         }
 
         socket.leave(roomId);
-        userRooms.delete(socket.user.id);
+        // [Redis Migration] 방 정보 삭제 (Redis)
+        await redisClient.del('userRoom:' + socket.user.id);
 
         // 퇴장 메시지 생성 및 저장
         const leaveMessage = await Message.create({
@@ -804,8 +806,9 @@ module.exports = function(io) {
           await redisClient.del('connectedUser:' + socket.user.id);
         }
 
-        const roomId = userRooms.get(socket.user.id);
-        userRooms.delete(socket.user.id);
+        // [Redis Migration] 방 정보 삭제 (Redis)
+        const roomId = await redisClient.get('userRoom:' + socket.user.id);
+        await redisClient.del('userRoom:' + socket.user.id);
 
         // 메시지 큐 정리
         const userQueues = Array.from(messageQueues.keys())
