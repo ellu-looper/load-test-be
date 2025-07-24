@@ -114,6 +114,7 @@ class RedisClient {
     try {
       if (this.isCluster && clusterNodes.length > 1) {
         console.log('Connecting to Redis Cluster...', clusterNodes);
+        console.log('DEBUG: Creating cluster with nodes:', JSON.stringify(clusterNodes, null, 2));
         
         this.client = Redis.createCluster({
           rootNodes: clusterNodes,
@@ -133,7 +134,7 @@ class RedisClient {
           enableOfflineQueue: false,
           enableReadyCheck: false,
           // Dynamic NAT map to resolve Redis cluster short names to full names
-          natMap: async (addr) => {
+          natMap: (addr) => {
             console.log('NAT mapping request for:', addr);
             const [host, port] = addr.split(':');
             
