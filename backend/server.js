@@ -102,8 +102,8 @@ app.use((err, req, res, next) => {
 
 // MongoDB connection with optimized pooling for load testing
 const mongooseOptions = {
-  maxPoolSize: 50,          // Maximum connections for high load
-  minPoolSize: 5,           // Minimum connections to maintain
+  maxPoolSize: 200,         // Increased for extreme load testing 
+  minPoolSize: 10,          // Higher minimum for better performance
   maxIdleTimeMS: 30000,     // Close idle connections after 30s
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,

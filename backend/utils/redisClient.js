@@ -9,9 +9,9 @@ const clusterNodes = process.env.REDIS_CLUSTER_NODES ?
     const [host, port] = node.split(':');
     return { host, port: parseInt(port) || 6379 };
   }) : [
-    { host: redisHost || 'redis-node-1', port: redisPort || 6379 },
-    { host: redisHost || 'redis-node-2', port: redisPort + 1 || 6380 },
-    { host: redisHost || 'redis-node-3', port: redisPort + 2 || 6381 }
+    { host: 'redis-cluster-0.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+    { host: 'redis-cluster-1.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+    { host: 'redis-cluster-2.redis-cluster-headless.default.svc.cluster.local', port: 6379 }
   ];
 
 class MockRedisClient {
