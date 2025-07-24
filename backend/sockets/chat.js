@@ -18,8 +18,8 @@ module.exports = function(io) {
   // const connectedUsers = new Map(); // [Redis Migration] Redis로 대체
   const streamingSessions = new Map();
   // const userRooms = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
-  const messageQueues = new Map();
-  const messageLoadRetries = new Map();
+  // const messageQueues = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
+  // const messageLoadRetries = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
   const BATCH_SIZE = 30;  // 한 번에 로드할 메시지 수
   const LOAD_DELAY = 300; // 메시지 로드 딜레이 (ms)
   const MAX_RETRIES = 3;  // 최대 재시도 횟수
@@ -217,19 +217,22 @@ module.exports = function(io) {
     const retryKey = `${roomId}:${socket.user.id}`;
     
     try {
-      if (messageLoadRetries.get(retryKey) >= MAX_RETRIES) {
+      // [Redis Migration] 재시도 횟수 체크 (Redis)
+      const retryCountValue = await redisClient.get('messageLoadRetry:' + retryKey);
+      if (Number(retryCountValue) >= MAX_RETRIES) {
         throw new Error('최대 재시도 횟수를 초과했습니다.');
       }
 
       const result = await loadMessages(socket, roomId, before);
-      messageLoadRetries.delete(retryKey);
+      // [Redis Migration] 재시도 횟수 삭제 (Redis)
+      await redisClient.del('messageLoadRetry:' + retryKey);
       return result;
 
     } catch (error) {
-      const currentRetries = messageLoadRetries.get(retryKey) || 0;
-      
+      // [Redis Migration] 재시도 횟수 증가 (Redis)
+      const currentRetries = Number(await redisClient.get('messageLoadRetry:' + retryKey)) || 0;
       if (currentRetries < MAX_RETRIES) {
-        messageLoadRetries.set(retryKey, currentRetries + 1);
+        await redisClient.set('messageLoadRetry:' + retryKey, currentRetries + 1, { ttl: 60 });
         const delay = Math.min(RETRY_DELAY * Math.pow(2, currentRetries), 10000);
         
         logDebug('retrying message load', {
@@ -242,7 +245,7 @@ module.exports = function(io) {
         return loadMessagesWithRetry(socket, roomId, before, currentRetries + 1);
       }
 
-      messageLoadRetries.delete(retryKey);
+      await redisClient.del('messageLoadRetry:' + retryKey);
       throw error;
     }
   };
@@ -401,7 +404,9 @@ module.exports = function(io) {
           throw new Error('채팅방 접근 권한이 없습니다.');
         }
 
-        if (messageQueues.get(queueKey)) {
+        // [Redis Migration] 메시지 큐 중복 체크 (Redis)
+        const isLoading = await redisClient.get('messageQueue:' + queueKey);
+        if (isLoading) {
           logDebug('message load skipped - already loading', {
             roomId,
             userId: socket.user.id
@@ -409,7 +414,8 @@ module.exports = function(io) {
           return;
         }
 
-        messageQueues.set(queueKey, true);
+        // [Redis Migration] 메시지 큐 등록 (Redis)
+        await redisClient.set('messageQueue:' + queueKey, 'true', { ttl: Math.ceil(LOAD_DELAY / 1000) });
         socket.emit('messageLoadStart');
 
         const result = await loadMessagesWithRetry(socket, roomId, before);
@@ -430,8 +436,9 @@ module.exports = function(io) {
           message: error.message || '이전 메시지를 불러오는 중 오류가 발생했습니다.'
         });
       } finally {
-        setTimeout(() => {
-          messageQueues.delete(queueKey);
+        // [Redis Migration] 메시지 큐 해제 (Redis)
+        setTimeout(async () => {
+          await redisClient.del('messageQueue:' + queueKey);
         }, LOAD_DELAY);
       }
     });
@@ -778,8 +785,8 @@ module.exports = function(io) {
 
         // 메시지 큐 정리
         const queueKey = `${roomId}:${socket.user.id}`;
-        messageQueues.delete(queueKey);
-        messageLoadRetries.delete(queueKey);
+        // messageQueues.delete(queueKey); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
+        // messageLoadRetries.delete(queueKey); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
 
         // 이벤트 발송
         io.to(roomId).emit('message', leaveMessage);
@@ -811,12 +818,12 @@ module.exports = function(io) {
         await redisClient.del('userRoom:' + socket.user.id);
 
         // 메시지 큐 정리
-        const userQueues = Array.from(messageQueues.keys())
-          .filter(key => key.endsWith(`:${socket.user.id}`));
-        userQueues.forEach(key => {
-          messageQueues.delete(key);
-          messageLoadRetries.delete(key);
-        });
+        const userQueues = (await redisClient.keys('messageQueue:*:' + socket.user.id)) || [];
+        for (const key of userQueues) {
+          await redisClient.del(key);
+          const retryKey = key.replace('messageQueue:', 'messageLoadRetry:');
+          await redisClient.del(retryKey);
+        }
         
         // 스트리밍 세션 정리
         for (const [messageId, session] of streamingSessions.entries()) {
