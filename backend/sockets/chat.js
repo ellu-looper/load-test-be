@@ -672,7 +672,7 @@ module.exports = function(io) {
           }
         ]);
 
-        const message = populatedMessage[0] || savedMessage;
+        message = populatedMessage[0] || savedMessage;
 
         // Update Redis cache for recent messages (팀원의 캐싱 최적화 유지)
         const cacheKey = `room:messages:${room}`;

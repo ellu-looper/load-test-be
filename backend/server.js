@@ -107,7 +107,6 @@ const mongooseOptions = {
   maxIdleTimeMS: 30000,     // Close idle connections after 30s
   serverSelectionTimeoutMS: 5000,
   socketTimeoutMS: 45000,
-  bufferMaxEntries: 0,      // Disable buffering for immediate errors
   bufferCommands: false,
   heartbeatFrequencyMS: 10000,
   readPreference: 'secondaryPreferred' // Use secondary for reads when available
