@@ -894,6 +894,22 @@ module.exports = function(io) {
             }
           }
         );
+        const cacheKey = `room:messages:${roomId}`;
+        let cached = await redisClient.get(cacheKey) || [];
+        let cacheChanged = false;
+        for (const messageId of messageIds) {
+          const idx = cached.findIndex(m => m._id === messageId.toString());
+          if (idx !== -1) {
+            if (!cached[idx].readers) cached[idx].readers = [];
+            if (!cached[idx].readers.some(r => r.userId === socket.user.id)) {
+              cached[idx].readers.push({ userId: socket.user.id, readAt: new Date() });
+              cacheChanged = true;
+            }
+          }
+        }
+        if (cacheChanged) {
+          await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
+        }
 
         socket.to(roomId).emit('messagesRead', {
           userId: socket.user.id,
@@ -926,6 +942,16 @@ module.exports = function(io) {
         } else if (type === 'remove') {
           await message.removeReaction(reaction, socket.user.id);
         }
+
+        // --- PATCH: Update Redis cache for strong consistency ---
+        const cacheKey = `room:messages:${message.room}`;
+        let cached = await redisClient.get(cacheKey) || [];
+        const idx = cached.findIndex(m => m._id === message._id.toString());
+        if (idx !== -1) {
+          cached[idx].reactions = message.reactions;
+          await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
+        }
+        // --- END PATCH ---
 
         // 업데이트된 리액션 정보 브로드캐스트
         io.to(message.room).emit('messageReactionUpdate', {
