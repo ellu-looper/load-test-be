@@ -127,11 +127,12 @@ class RedisClient {
             family: 4,
             keepAlive: 30000,
             connectTimeout: 10000,
-            lazyConnect: true
+            lazyConnect: false
           },
-          enableOfflineQueue: false,
-          enableReadyCheck: false,
-          scaleReads: 'slave'
+          enableOfflineQueue: true,
+          enableReadyCheck: true,
+          scaleReads: 'slave',
+          maxRetriesPerRequest: 3
         });
       } else {
         console.log('Connecting to Redis single instance with ioredis...');
@@ -215,7 +216,7 @@ class RedisClient {
       }
 
       if (options.ttl) {
-        return await this.client.setEx(key, options.ttl, stringValue);
+        return await this.client.setex(key, options.ttl, stringValue);
       }
       return await this.client.set(key, stringValue);
     } catch (error) {
@@ -255,7 +256,7 @@ class RedisClient {
       }
 
       if (this.useMock) {
-        return await this.client.setEx(key, seconds, value);
+        return await this.client.setex(key, seconds, value);
       }
 
       let stringValue;
@@ -265,7 +266,7 @@ class RedisClient {
         stringValue = String(value);
       }
 
-      return await this.client.setEx(key, seconds, stringValue);
+      return await this.client.setex(key, seconds, stringValue);
     } catch (error) {
       console.error('Redis setEx error:', error);
       throw error;
