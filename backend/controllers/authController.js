@@ -121,7 +121,7 @@ const authController = {
 
       // 사용자 조회
       // 로드 테스트 최적화: 로그인에 필요한 최소 필드만 조회
-      const user = await User.findOne({ email }).select('+password name profileImage').lean();
+      const user = await User.findOne({ email }).select('+password name profileImage');
       if (!user) {
         return res.status(401).json({
           success: false,
