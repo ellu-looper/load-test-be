@@ -126,7 +126,21 @@ class RedisClient {
           useReplicas: true,
           enableAutoPipelining: true,
           enableOfflineQueue: false,
-          enableReadyCheck: false
+          enableReadyCheck: false,
+          // Dynamic NAT map to resolve Redis cluster short names to full names
+          natMap: async (addr) => {
+            console.log('NAT mapping request for:', addr);
+            const [host, port] = addr.split(':');
+            
+            // If it's a short Redis cluster name, resolve it to full name
+            if (host.includes('redis-cluster-') && host.includes('.redis-cluster-headless') && !host.includes('.default.svc.cluster.local')) {
+              const fullHost = `${host}.default.svc.cluster.local`;
+              console.log(`NAT mapping: ${host} -> ${fullHost}`);
+              return { host: fullHost, port: parseInt(port) || 6379 };
+            }
+            
+            return { host, port: parseInt(port) || 6379 };
+          }
         });
       } else {
         console.log('Connecting to Redis single instance...');
