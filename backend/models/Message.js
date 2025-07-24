@@ -90,14 +90,30 @@ const MessageSchema = new mongoose.Schema({
   }
 });
 
-// 복합 인덱스 설정
-MessageSchema.index({ room: 1, timestamp: -1 });
-MessageSchema.index({ room: 1, isDeleted: 1 });
-MessageSchema.index({ 'readers.userId': 1 });
-MessageSchema.index({ sender: 1 });
-MessageSchema.index({ type: 1 });
-MessageSchema.index({ timestamp: -1 });
-MessageSchema.index({ 'reactions.userId': 1 });
+// 로드 테스트 성능 최적화를 위한 복합 인덱스 설정
+// 메시지 로딩 쿼리용 기본 인덱스 (가장 빈번한 작업)
+MessageSchema.index({ room: 1, timestamp: -1, isDeleted: 1 });
+
+// 읽음 상태 쿼리용 인덱스 (실시간 작업에서 빈번함)
+MessageSchema.index({ room: 1, 'readers.userId': 1 });
+
+// 발신자 기반 쿼리용 인덱스 (룸 필터링 포함)
+MessageSchema.index({ sender: 1, room: 1, timestamp: -1 });
+
+// AI 메시지 쿼리용 인덱스
+MessageSchema.index({ room: 1, type: 1, aiType: 1 });
+
+// 파일 메시지 쿼리용 인덱스
+MessageSchema.index({ room: 1, type: 1, file: 1 });
+
+// 멘션 쿼리용 인덱스
+MessageSchema.index({ room: 1, mentions: 1 });
+
+// 리액션용 희소 인덱스 (리액션이 있는 메시지만)
+MessageSchema.index({ 'reactions': 1 }, { sparse: true });
+
+// 메시지 정리용 TTL 인덱스 (선택사항 - 매우 높은 부하 시나리오용)
+// MessageSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 }); // 30일
 
 // 읽음 처리 Static 메소드 개선
 MessageSchema.statics.markAsRead = async function(messageIds, userId) {

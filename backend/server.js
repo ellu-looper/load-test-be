@@ -100,10 +100,25 @@ app.use((err, req, res, next) => {
   });
 });
 
+// MongoDB connection with optimized pooling for load testing
+const mongooseOptions = {
+  maxPoolSize: 50,          // Maximum connections for high load
+  minPoolSize: 5,           // Minimum connections to maintain
+  maxIdleTimeMS: 30000,     // Close idle connections after 30s
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  bufferMaxEntries: 0,      // Disable buffering for immediate errors
+  bufferCommands: false,
+  heartbeatFrequencyMS: 10000,
+  readPreference: 'secondaryPreferred' // Use secondary for reads when available
+};
+
 // 서버 시작
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGO_URI, mongooseOptions)
   .then(() => {
-    console.log('MongoDB Connected');
+    console.log('MongoDB Connected with load testing optimizations');
+    console.log(`Connection pool: max=${mongooseOptions.maxPoolSize}, min=${mongooseOptions.minPoolSize}`);
+    
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);
       console.log('Environment:', process.env.NODE_ENV);

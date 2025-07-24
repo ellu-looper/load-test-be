@@ -32,8 +32,8 @@ const authController = {
         });
       }
       
-      // Check existing user
-      const existingUser = await User.findOne({ email });
+      // 로드 테스트 최적화: 필요한 필드만 조회하여 성능 향상
+      const existingUser = await User.findOne({ email }).select('_id').lean();
       if (existingUser) {
         return res.status(409).json({
           success: false,
@@ -120,7 +120,8 @@ const authController = {
       }
 
       // 사용자 조회
-      const user = await User.findOne({ email }).select('+password');
+      // 로드 테스트 최적화: 로그인에 필요한 최소 필드만 조회
+      const user = await User.findOne({ email }).select('+password name profileImage').lean();
       if (!user) {
         return res.status(401).json({
           success: false,

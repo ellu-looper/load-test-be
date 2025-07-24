@@ -50,4 +50,11 @@ RoomSchema.methods.checkPassword = async function(password) {
   return await bcrypt.compare(password, room.password);
 };
 
+// 로드 테스트 최적화를 위한 인덱스 설정
+RoomSchema.index({ creator: 1, createdAt: -1 }); // 생성자별 룸 조회용
+RoomSchema.index({ participants: 1 }); // 참가자별 룸 조회용 (가장 빈번한 쿼리)
+RoomSchema.index({ createdAt: -1 }); // 최근 생성된 룸 조회용
+RoomSchema.index({ name: 1 }); // 룸 이름 검색용
+RoomSchema.index({ hasPassword: 1 }); // 비밀번호 유무별 필터링용
+
 module.exports = mongoose.model('Room', RoomSchema);

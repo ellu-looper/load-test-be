@@ -168,10 +168,11 @@ UserSchema.methods.decryptEmail = function() {
   }
 };
 
-// 인덱스 생성
-UserSchema.index({ email: 1 });
-UserSchema.index({ encryptedEmail: 1 }, { unique: true, sparse: true });
-UserSchema.index({ createdAt: 1 });
-UserSchema.index({ lastActive: 1 });
+// 로드 테스트 최적화를 위한 인덱스 생성
+UserSchema.index({ email: 1 }); // 로그인 쿼리용
+UserSchema.index({ encryptedEmail: 1 }, { unique: true, sparse: true }); // 암호화된 이메일용
+UserSchema.index({ lastActive: -1 }); // 최근 활성 사용자 조회용 (내림차순)
+UserSchema.index({ createdAt: -1 }); // 최근 가입자 조회용 (내림차순)
+UserSchema.index({ name: 1 }); // 사용자 검색용
 
 module.exports = mongoose.model('User', UserSchema);

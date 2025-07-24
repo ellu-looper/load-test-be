@@ -33,7 +33,7 @@ module.exports = function(io) {
     });
   };
 
-  // 메시지 일괄 로드 함수
+  // 로드 테스트 최적화: 캐싱 + Aggregation Pipeline을 사용한 메시지 로드 함수
   const loadMessages = async (socket, roomId, before, limit = BATCH_SIZE) => {
     let timeoutId; // Declare a variable to hold the timeout ID
     const timeoutPromise = new Promise((_, reject) => {
@@ -43,9 +43,9 @@ module.exports = function(io) {
     });
 
     try {
+      // 캐시 체크 (최근 메시지만)
       let cachedMessages = [];
       if (!before) {
-        // Only use cache for most recent messages
         cachedMessages = await redisClient.get(`room:messages:${roomId}`) || [];
         if (cachedMessages.length > 0) {
           console.log('캐시 HIT', roomId, cachedMessages.length);
@@ -62,35 +62,76 @@ module.exports = function(io) {
         console.log('캐시 MISS', roomId, cachedMessages.length);
       }
 
-      // 쿼리 구성
-      const query = { room: roomId };
+      // Aggregation Pipeline을 사용하여 쿼리 최적화
+      const matchStage = {
+        room: roomId,
+        isDeleted: false
+      };
+      
       if (before) {
-        query.timestamp = { $lt: new Date(before) };
+        matchStage.timestamp = { $lt: new Date(before) };
         console.log(`[DEBUG] Loading previous messages for room ${roomId} before ${before}`);
       } else {
         console.log(`[DEBUG] Loading initial messages for room ${roomId} (no 'before' timestamp)`);
       }
 
-      // 메시지 로드 with profileImage
-      console.time(`MongoDB Query for Room ${roomId} (before: ${before})`);
-      const mongoQueryPromise = Message.find(query)
-        .populate('sender', 'name email profileImage')
-        .populate({
-          path: 'file',
-          select: 'filename originalname mimetype size'
-        })
-        .sort({ timestamp: -1 })
-        .limit(limit + 1)
-        .lean()
-        .then(async (messages) => {
-          return messages;
-        });
-
+      console.time(`MongoDB Aggregation for Room ${roomId} (before: ${before})`);
+      // 단일 Aggregation Pipeline으로 모든 작업 처리
       const messages = await Promise.race([
-        mongoQueryPromise,
+        Message.aggregate([
+          // 1. 기본 필터링 (인덱스 사용: room + timestamp + isDeleted)
+          { $match: matchStage },
+          
+          // 2. 정렬 및 제한 (인덱스 사용)
+          { $sort: { timestamp: -1 } },
+          { $limit: limit + 1 },
+          
+          // 3. User 정보 조인 (프로젝션으로 필요한 필드만)
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'sender',
+              foreignField: '_id',
+              as: 'sender',
+              pipeline: [
+                { $project: { name: 1, email: 1, profileImage: 1 } }
+              ]
+            }
+          },
+          
+          // 4. File 정보 조인 (조건부)
+          {
+            $lookup: {
+              from: 'files',
+              localField: 'file',
+              foreignField: '_id',
+              as: 'file',
+              pipeline: [
+                { $project: { filename: 1, originalname: 1, mimetype: 1, size: 1 } }
+              ]
+            }
+          },
+          
+          // 5. 배열 필드 단일 객체로 변환
+          {
+            $addFields: {
+              sender: { $arrayElemAt: ['$sender', 0] },
+              file: { $arrayElemAt: ['$file', 0] }
+            }
+          },
+          
+          // 6. 불필요한 필드 제거
+          {
+            $project: {
+              __v: 0,
+              updatedAt: 0,
+              isDeleted: 0
+            }
+          }
+        ]),
         timeoutPromise
       ]);
-      console.timeEnd(`MongoDB Query for Room ${roomId} (before: ${before})`);
+      console.timeEnd(`MongoDB Aggregation for Room ${roomId} (before: ${before})`);
 
       // timeoutPromise 가 먼저 완료되면 messages 는 Error 객체가 됨
       if (messages instanceof Error) {
@@ -104,25 +145,33 @@ module.exports = function(io) {
         new Date(a.timestamp) - new Date(b.timestamp)
       );
 
-      // Read status asynchronous update
+      // 로드 테스트 최적화: 대량 읽음 상태 업데이트
       if (sortedMessages.length > 0 && socket.user) {
         const messageIds = sortedMessages.map(msg => msg._id);
-        Message.updateMany(
-          {
-            _id: { $in: messageIds },
-            'readers.userId': { $ne: socket.user.id }
-          },
-          {
-            $push: {
-              readers: {
-                userId: socket.user.id,
-                readAt: new Date()
+        
+        // bulkWrite를 사용하여 성능 최적화
+        const bulkOps = messageIds.map(messageId => ({
+          updateOne: {
+            filter: {
+              _id: messageId,
+              'readers.userId': { $ne: socket.user.id }
+            },
+            update: {
+              $push: {
+                readers: {
+                  userId: socket.user.id,
+                  readAt: new Date()
+                }
               }
             }
           }
-        ).exec().catch(error => {
-          console.error('Read status update error:', error);
-        });
+        }));
+
+        // 비동기로 대량 업데이트 실행 (응답 속도에 영향 없음)
+        Message.bulkWrite(bulkOps, { ordered: false })
+          .catch(error => {
+            console.error('Bulk read status update error:', error);
+          });
       }
 
       if (!before && messages.length > 0) {
@@ -589,22 +638,46 @@ module.exports = function(io) {
             throw new Error('지원하지 않는 메시지 타입입니다.');
         }
 
-        await message.save();
-        await message.populate([
-          { path: 'sender', select: 'name email profileImage' },
-          { path: 'file', select: 'filename originalname mimetype size' }
+        // 메시지 저장 및 populate를 한 번에 처리하여 성능 최적화
+        const savedMessage = await message.save();
+        
+        // Aggregation을 사용하여 populate 최적화
+        const populatedMessage = await Message.aggregate([
+          { $match: { _id: savedMessage._id } },
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'sender',
+              foreignField: '_id',
+              as: 'sender',
+              pipeline: [{ $project: { name: 1, email: 1, profileImage: 1 } }]
+            }
+          },
+          {
+            $lookup: {
+              from: 'files',
+              localField: 'file',
+              foreignField: '_id',
+              as: 'file',
+              pipeline: [{ $project: { filename: 1, originalname: 1, mimetype: 1, size: 1 } }]
+            }
+          },
+          {
+            $addFields: {
+              sender: { $arrayElemAt: ['$sender', 0] },
+              file: { $arrayElemAt: ['$file', 0] }
+            }
+          }
         ]);
 
-        // Update Redis cache for recent messages
+        const message = populatedMessage[0] || savedMessage;
+
+        // Update Redis cache for recent messages (팀원의 캐싱 최적화 유지)
         const cacheKey = `room:messages:${room}`;
         let cached = await redisClient.get(cacheKey) || [];
         cached.push(message.toObject ? message.toObject() : message);
         if (cached.length > RECENT_MESSAGE_CACHE) cached = cached.slice(-RECENT_MESSAGE_CACHE);
         await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
-
-        // // Publish to Redis Pub/Sub instead of direct emit
-        // await redisPub.publish(PUBSUB_CHANNEL, JSON.stringify({ room, message }));
-        // // Do not emit directly here; handled by subscriber
 
         io.to(room).emit('message', message);
 
