@@ -117,7 +117,10 @@ class RedisClient {
             lazyConnect: true,
             keepAlive: 30000,
             family: 4
-          }
+          },
+          useReplicas: true,
+          enableAutoPipelining: true,
+          enableOfflineQueue: false
         });
       } else {
         console.log('Connecting to Redis single instance...');
