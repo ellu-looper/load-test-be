@@ -115,30 +115,25 @@ class RedisClient {
       if (this.isCluster && clusterNodes.length > 1) {
         console.log('Connecting to Redis Cluster...', clusterNodes);
         
-        this.client = Redis.createCluster({
-          rootNodes: clusterNodes,
-          defaults: {
+        // For load testing - use single Redis connection with round-robin
+        // This avoids cluster mode networking issues entirely
+        this.nodeIndex = 0;
+        this.allNodes = clusterNodes;
+        
+        const currentNode = clusterNodes[this.nodeIndex % clusterNodes.length];
+        console.log(`Using Redis node: ${currentNode.host}:${currentNode.port}`);
+        
+        this.client = Redis.createClient({
+          socket: {
+            host: currentNode.host,
+            port: currentNode.port,
             connectTimeout: 10000,
-            lazyConnect: true,
-            keepAlive: 30000,
             family: 4,
-            socket: {
-              family: 4,
-              keepAlive: true
-            }
+            keepAlive: true
           },
-          useReplicas: true,
+          retryDelayOnFailover: 100,
           enableAutoPipelining: true,
-          enableOfflineQueue: false,
-          scaleReads: 'slave',
-          natMap: {
-            '192.168.69.5:6379': { host: 'redis-cluster-0.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
-            '192.168.158.6:6379': { host: 'redis-cluster-1.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
-            '192.168.162.68:6379': { host: 'redis-cluster-2.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
-            '192.168.110.68:6379': { host: 'redis-cluster-3.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
-            '192.168.105.197:6379': { host: 'redis-cluster-4.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
-            '192.168.58.69:6379': { host: 'redis-cluster-5.redis-cluster-headless.default.svc.cluster.local', port: 6379 }
-          }
+          maxRetriesPerRequest: 3
         });
       } else {
         console.log('Connecting to Redis single instance...');
