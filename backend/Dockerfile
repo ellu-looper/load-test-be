@@ -3,7 +3,7 @@ FROM node:18-alpine AS base
 
 # 성능 최적화를 위한 환경 설정
 ENV NODE_ENV=production
-ENV NODE_OPTIONS="--max-old-space-size=1024 --optimize-for-size"
+ENV NODE_OPTIONS="--max-old-space-size=1024"
 ENV UV_THREADPOOL_SIZE=16
 
 # 패키지 매니저 설정 (성능 최적화)
