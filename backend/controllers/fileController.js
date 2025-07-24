@@ -2,34 +2,10 @@ const File = require('../models/File');
 const Message = require('../models/Message');
 const Room = require('../models/Room');
 const { processFileForRAG } = require('../services/fileService');
-const path = require('path');
-const fs = require('fs');
-const { promisify } = require('util');
-const crypto = require('crypto');
-const { uploadDir } = require('../middleware/upload');
+const AWS = require('aws-sdk');
+const s3 = new AWS.S3();
 const redisClient = require('../utils/redisClient');
 const FILE_META_TTL = 24 * 60 * 60; // 1일
-
-const fsPromises = {
-  writeFile: promisify(fs.writeFile),
-  unlink: promisify(fs.unlink),
-  access: promisify(fs.access),
-  mkdir: promisify(fs.mkdir),
-  rename: promisify(fs.rename)
-};
-
-const isPathSafe = (filepath, directory) => {
-  const resolvedPath = path.resolve(filepath);
-  const resolvedDirectory = path.resolve(directory);
-  return resolvedPath.startsWith(resolvedDirectory);
-};
-
-const generateSafeFilename = (originalFilename) => {
-  const ext = path.extname(originalFilename || '').toLowerCase();
-  const timestamp = Date.now();
-  const randomBytes = crypto.randomBytes(8).toString('hex');
-  return `${timestamp}_${randomBytes}${ext}`;
-};
 
 // 개선된 파일 정보 조회 함수
 const getFileFromRequest = async (req) => {
@@ -45,13 +21,6 @@ const getFileFromRequest = async (req) => {
     if (!token || !sessionId) {
       throw new Error('Authentication required');
     }
-
-    const filePath = path.join(uploadDir, filename);
-    if (!isPathSafe(filePath, uploadDir)) {
-      throw new Error('Invalid file path');
-    }
-
-    await fsPromises.access(filePath, fs.constants.R_OK);
 
     const file = await File.findOne({ filename: filename });
     if (!file) {
@@ -74,7 +43,7 @@ const getFileFromRequest = async (req) => {
       throw new Error('Unauthorized access');
     }
 
-    return { file, filePath };
+    return { file };
   } catch (error) {
     console.error('getFileFromRequest error:', {
       filename: req.params.filename,
@@ -93,21 +62,17 @@ exports.uploadFile = async (req, res) => {
       });
     }
 
-    const safeFilename = generateSafeFilename(req.file.originalname);
-    const currentPath = req.file.path;
-    const newPath = path.join(uploadDir, safeFilename);
-
+    // S3: req.file.key is the S3 object key, req.file.location is the S3 URL
     const file = new File({
-      filename: safeFilename,
+      filename: req.file.key, // S3 object key
       originalname: req.file.originalname,
       mimetype: req.file.mimetype,
       size: req.file.size,
       user: req.user.id,
-      path: newPath
+      path: req.file.location // S3 URL
     });
 
     await file.save();
-    await fsPromises.rename(currentPath, newPath);
 
     // 파일 메타데이터 Redis 캐싱
     const fileMetaKey = `file:meta:${file._id}`;
@@ -130,13 +95,7 @@ exports.uploadFile = async (req, res) => {
 
   } catch (error) {
     console.error('File upload error:', error);
-    if (req.file?.path) {
-      try {
-        await fsPromises.unlink(req.file.path);
-      } catch (unlinkError) {
-        console.error('Failed to delete uploaded file:', unlinkError);
-      }
-    }
+    // Optionally, delete from S3 if needed
     res.status(500).json({
       success: false,
       message: '파일 업로드 중 오류가 발생했습니다.',
@@ -147,9 +106,11 @@ exports.uploadFile = async (req, res) => {
 
 exports.downloadFile = async (req, res) => {
   try {
-    const { file, filePath } = await getFileFromRequest(req);
+
+    const { file } = await getFileFromRequest(req);
     const contentDisposition = file.getContentDisposition('attachment');
 
+    // S3 download
     res.set({
       'Content-Type': file.mimetype,
       'Content-Length': file.size,
@@ -159,9 +120,13 @@ exports.downloadFile = async (req, res) => {
       'Expires': '0'
     });
 
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.on('error', (error) => {
-      console.error('File streaming error:', error);
+    const s3Stream = s3.getObject({
+      Bucket: process.env.AWS_S3_BUCKET,
+      Key: file.filename
+    }).createReadStream();
+
+    s3Stream.on('error', (error) => {
+      console.error('S3 file streaming error:', error);
       if (!res.headersSent) {
         res.status(500).json({
           success: false,
@@ -170,7 +135,7 @@ exports.downloadFile = async (req, res) => {
       }
     });
 
-    fileStream.pipe(res);
+    s3Stream.pipe(res);
 
   } catch (error) {
     handleFileError(error, res);
@@ -179,7 +144,8 @@ exports.downloadFile = async (req, res) => {
 
 exports.viewFile = async (req, res) => {
   try {
-    const { file, filePath } = await getFileFromRequest(req);
+
+    const { file } = await getFileFromRequest(req);
 
     if (!file.isPreviewable()) {
       return res.status(415).json({
@@ -189,7 +155,6 @@ exports.viewFile = async (req, res) => {
     }
 
     const contentDisposition = file.getContentDisposition('inline');
-        
     res.set({
       'Content-Type': file.mimetype,
       'Content-Disposition': contentDisposition,
@@ -197,9 +162,13 @@ exports.viewFile = async (req, res) => {
       'Cache-Control': 'public, max-age=31536000, immutable'
     });
 
-    const fileStream = fs.createReadStream(filePath);
-    fileStream.on('error', (error) => {
-      console.error('File streaming error:', error);
+    const s3Stream = s3.getObject({
+      Bucket: process.env.AWS_S3_BUCKET,
+      Key: file.filename
+    }).createReadStream();
+
+    s3Stream.on('error', (error) => {
+      console.error('S3 file streaming error:', error);
       if (!res.headersSent) {
         res.status(500).json({
           success: false,
@@ -208,25 +177,11 @@ exports.viewFile = async (req, res) => {
       }
     });
 
-    fileStream.pipe(res);
+    s3Stream.pipe(res);
 
   } catch (error) {
     handleFileError(error, res);
   }
-};
-
-const handleFileStream = (fileStream, res) => {
-  fileStream.on('error', (error) => {
-    console.error('File streaming error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        message: '파일 스트리밍 중 오류가 발생했습니다.'
-      });
-    }
-  });
-
-  fileStream.pipe(res);
 };
 
 const handleFileError = (error, res) => {
@@ -275,20 +230,14 @@ exports.deleteFile = async (req, res) => {
       });
     }
 
-    const filePath = path.join(uploadDir, file.filename);
-
-    if (!isPathSafe(filePath, uploadDir)) {
-      return res.status(403).json({
-        success: false,
-        message: '잘못된 파일 경로입니다.'
-      });
-    }
-    
+    // Delete from S3
     try {
-      await fsPromises.access(filePath, fs.constants.W_OK);
-      await fsPromises.unlink(filePath);
+      await s3.deleteObject({
+        Bucket: process.env.AWS_S3_BUCKET,
+        Key: file.filename
+      }).promise();
     } catch (unlinkError) {
-      console.error('File deletion error:', unlinkError);
+      console.error('S3 file deletion error:', unlinkError);
     }
 
     await file.deleteOne();
