@@ -899,18 +899,21 @@ module.exports = function(io) {
         const cacheKey = `room:messages:${roomId}`;
         let cached = await redisClient.get(cacheKey) || [];
         let cacheChanged = false;
-        for (const messageId of messageIds) {
-          const idx = cached.findIndex(m => m._id === messageId.toString());
-          if (idx !== -1) {
-            if (!cached[idx].readers) cached[idx].readers = [];
-            if (!cached[idx].readers.some(r => r.userId === socket.user.id)) {
-              cached[idx].readers.push({ userId: socket.user.id, readAt: new Date() });
-              cacheChanged = true;
+        if (cached) {
+          if (typeof cached === 'string') cached = JSON.parse(cached);
+          for (const messageId of messageIds) {
+            const idx = cached.findIndex(m => m._id === messageId.toString());
+            if (idx !== -1) {
+              if (!cached[idx].readers) cached[idx].readers = [];
+              if (!cached[idx].readers.some(r => r.userId === socket.user.id)) {
+                cached[idx].readers.push({ userId: socket.user.id, readAt });
+                cacheChanged = true;
+              }
             }
           }
-        }
-        if (cacheChanged) {
-          await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
+          if (cacheChanged) {
+            await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
+          }
         }
 
         socket.to(roomId).emit('messagesRead', {
