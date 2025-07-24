@@ -104,8 +104,11 @@ exports.getProfile = async (req, res) => {
     const cacheKey = `user:profile:${req.user.id}`;
     const cached = await redisClient.get(cacheKey);
     if (cached) {
+      console.log('캐시 HIT', req.user.id);
       return res.json({ success: true, user: JSON.parse(cached) });
     }
+
+      onsole.log('캐시 MISS', req.user.id);
     const user = await User.findById(req.user.id).select('-password');
     if (!user) {
       return res.status(404).json({

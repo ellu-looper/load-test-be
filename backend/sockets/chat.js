@@ -33,10 +33,11 @@ module.exports = function(io) {
     });
   };
 
-  // 메시지 일괄 로드 함수 개선
+  // 메시지 일괄 로드 함수
   const loadMessages = async (socket, roomId, before, limit = BATCH_SIZE) => {
+    let timeoutId; // Declare a variable to hold the timeout ID
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => { // Assign the ID here
         reject(new Error('Message loading timed out'));
       }, MESSAGE_LOAD_TIMEOUT);
     });
@@ -46,9 +47,12 @@ module.exports = function(io) {
       if (!before) {
         // Only use cache for most recent messages
         cachedMessages = await redisClient.get(`room:messages:${roomId}`) || [];
-        if (cachedMessages.length >= limit) {
+        if (cachedMessages.length > 0) {
           console.log('캐시 HIT', roomId, cachedMessages.length);
-          const sortedMessages = cachedMessages.slice(-limit);
+          clearTimeout(timeoutId);
+          const sortedMessages = cachedMessages.length > limit
+          ? cachedMessages.slice(-limit)
+          : cachedMessages;
           return {
             messages: sortedMessages,
             hasMore: cachedMessages.length > limit,
@@ -62,30 +66,45 @@ module.exports = function(io) {
       const query = { room: roomId };
       if (before) {
         query.timestamp = { $lt: new Date(before) };
+        console.log(`[DEBUG] Loading previous messages for room ${roomId} before ${before}`);
+      } else {
+        console.log(`[DEBUG] Loading initial messages for room ${roomId} (no 'before' timestamp)`);
       }
 
       // 메시지 로드 with profileImage
+      console.time(`MongoDB Query for Room ${roomId} (before: ${before})`);
+      const mongoQueryPromise = Message.find(query)
+        .populate('sender', 'name email profileImage')
+        .populate({
+          path: 'file',
+          select: 'filename originalname mimetype size'
+        })
+        .sort({ timestamp: -1 })
+        .limit(limit + 1)
+        .lean()
+        .then(async (messages) => {
+          return messages;
+        });
+
       const messages = await Promise.race([
-        Message.find(query)
-          .populate('sender', 'name email profileImage')
-          .populate({
-            path: 'file',
-            select: 'filename originalname mimetype size'
-          })
-          .sort({ timestamp: -1 })
-          .limit(limit + 1)
-          .lean(),
+        mongoQueryPromise,
         timeoutPromise
       ]);
+      console.timeEnd(`MongoDB Query for Room ${roomId} (before: ${before})`);
 
-      // 결과 처리
+      // timeoutPromise 가 먼저 완료되면 messages 는 Error 객체가 됨
+      if (messages instanceof Error) {
+        throw messages;
+      }
+
+      // Result processing
       const hasMore = messages.length > limit;
       const resultMessages = messages.slice(0, limit);
       const sortedMessages = resultMessages.sort((a, b) => 
         new Date(a.timestamp) - new Date(b.timestamp)
       );
 
-      // 읽음 상태 비동기 업데이트
+      // Read status asynchronous update
       if (sortedMessages.length > 0 && socket.user) {
         const messageIds = sortedMessages.map(msg => msg._id);
         Message.updateMany(
@@ -108,7 +127,7 @@ module.exports = function(io) {
 
       if (!before && messages.length > 0) {
         // Cache the most recent messages
-        await redisClient.setEx(`room:messages:${roomId}`, CHAT_MESSAGE_TTL, messages.slice(0, RECENT_MESSAGE_CACHE));
+        await redisClient.setEx(`room:messages:${roomId}`, CHAT_MESSAGE_TTL, JSON.stringify(messages.slice(0, RECENT_MESSAGE_CACHE)));
       }
 
       return {
@@ -121,7 +140,8 @@ module.exports = function(io) {
         logDebug('message load timeout', {
           roomId,
           before,
-          limit
+          limit,
+          timeout: MESSAGE_LOAD_TIMEOUT
         });
       } else {
         console.error('Load messages error:', {
@@ -133,6 +153,11 @@ module.exports = function(io) {
         });
       }
       throw error;
+    } finally {
+        // Ensure the timeout is always cleared, regardless of success or error
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
     }
   };
 

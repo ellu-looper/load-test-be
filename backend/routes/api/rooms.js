@@ -143,6 +143,7 @@ router.get('/', [limiter, auth], async (req, res) => {
     const cacheKey = `room:list:${page}:${pageSize}:${sortField}:${sortOrder}:${req.query.search || ''}`;
     const cached = await redisClient.get(cacheKey);
     if (cached) {
+      console.log('캐시 HIT', cacheKey);
       res.set({
         'Cache-Control': 'private, max-age=10',
         'Last-Modified': new Date().toUTCString()
@@ -150,6 +151,7 @@ router.get('/', [limiter, auth], async (req, res) => {
       return res.json(cached);
     }
 
+    console.log('캐시 MISS', cacheKey);
     const response = {
       success: true,
       data: safeRooms,
