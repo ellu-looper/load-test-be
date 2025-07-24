@@ -118,7 +118,7 @@ class RedisClient {
         this.client = Redis.createCluster({
           rootNodes: clusterNodes,
           defaults: {
-            connectTimeout: 5000,
+            connectTimeout: 10000,
             lazyConnect: true,
             keepAlive: 30000,
             family: 4,
@@ -130,7 +130,15 @@ class RedisClient {
           useReplicas: true,
           enableAutoPipelining: true,
           enableOfflineQueue: false,
-          scaleReads: 'slave'
+          scaleReads: 'slave',
+          natMap: {
+            '192.168.69.5:6379': { host: 'redis-cluster-0.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+            '192.168.158.6:6379': { host: 'redis-cluster-1.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+            '192.168.162.68:6379': { host: 'redis-cluster-2.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+            '192.168.110.68:6379': { host: 'redis-cluster-3.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+            '192.168.105.197:6379': { host: 'redis-cluster-4.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+            '192.168.58.69:6379': { host: 'redis-cluster-5.redis-cluster-headless.default.svc.cluster.local', port: 6379 }
+          }
         });
       } else {
         console.log('Connecting to Redis single instance...');
