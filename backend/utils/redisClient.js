@@ -2,8 +2,13 @@
 const Redis = require('redis');
 const { redisHost, redisPort } = require('../config/keys');
 
-// Redis Cluster configuration
+// Redis Cluster configuration - Force cluster mode in production
 const isClusterMode = process.env.REDIS_CLUSTER_NODES || process.env.NODE_ENV === 'production';
+console.log('Redis cluster mode detection:', { 
+  isClusterMode, 
+  hasClusterNodes: !!process.env.REDIS_CLUSTER_NODES,
+  nodeEnv: process.env.NODE_ENV 
+});
 const clusterNodes = process.env.REDIS_CLUSTER_NODES ? 
   process.env.REDIS_CLUSTER_NODES.split(',').map(node => {
     const [host, port] = node.split(':');
@@ -116,11 +121,16 @@ class RedisClient {
             connectTimeout: 5000,
             lazyConnect: true,
             keepAlive: 30000,
-            family: 4
+            family: 4,
+            socket: {
+              family: 4,
+              keepAlive: true
+            }
           },
           useReplicas: true,
           enableAutoPipelining: true,
-          enableOfflineQueue: false
+          enableOfflineQueue: false,
+          scaleReads: 'slave'
         });
       } else {
         console.log('Connecting to Redis single instance...');
