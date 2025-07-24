@@ -247,4 +247,12 @@ class RedisClient {
 }
 
 const redisClient = new RedisClient();
+const redisPub = Redis.createClient({ url: `redis://${redisHost}:${redisPort}` });
+const redisSub = Redis.createClient({ url: `redis://${redisHost}:${redisPort}` });
+
+redisPub.connect().catch(console.error);
+redisSub.connect().catch(console.error);
+
 module.exports = redisClient;
+module.exports.redisPub = redisPub;
+module.exports.redisSub = redisSub;

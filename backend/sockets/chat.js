@@ -11,6 +11,8 @@ const MESSAGES_TTL = 24 * 60 * 60; // 24 hours
 
 const RECENT_MESSAGE_CACHE = 50;
 const CHAT_MESSAGE_TTL = 24 * 60 * 60; // 24 hours
+const { redisPub, redisSub } = require('../utils/redisClient');
+const PUBSUB_CHANNEL = 'chat:messages';
 
 module.exports = function(io) {
   const connectedUsers = new Map();
@@ -602,11 +604,8 @@ module.exports = function(io) {
         if (cached.length > RECENT_MESSAGE_CACHE) cached = cached.slice(-RECENT_MESSAGE_CACHE);
         await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
 
-        // // Publish to Redis Pub/Sub instead of direct emit
-        // await redisPub.publish(PUBSUB_CHANNEL, JSON.stringify({ room, message }));
-        // // Do not emit directly here; handled by subscriber
-
-        io.to(room).emit('message', message);
+        // Publish to Redis Pub/Sub
+        await redisPub.publish(PUBSUB_CHANNEL, JSON.stringify({ room, message }));
 
         // AI 멘션이 있는 경우 AI 응답 생성
         if (aiMentions.length > 0) {
@@ -1036,6 +1035,16 @@ module.exports = function(io) {
       });
     }
   }
+
+  // Redis Pub/Sub 구독: 메시지 수신 시 브로드캐스트
+  redisSub.subscribe(PUBSUB_CHANNEL, (messageStr) => {
+    try {
+      const { room, message } = JSON.parse(messageStr);
+      io.to(room).emit('message', message);
+    } catch (err) {
+      console.error('Pub/Sub message parse error:', err);
+    }
+  });
 
   return io;
 };
