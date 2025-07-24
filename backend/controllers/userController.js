@@ -3,6 +3,8 @@ const User = require('../models/User');
 const { upload } = require('../middleware/upload');
 const path = require('path');
 const fs = require('fs').promises;
+const redisClient = require('../utils/redisClient');
+const USER_PROFILE_TTL = 24 * 60 * 60; // 24 hours
 
 // 회원가입
 exports.register = async (req, res) => {
@@ -99,6 +101,14 @@ exports.register = async (req, res) => {
 // 프로필 조회
 exports.getProfile = async (req, res) => {
   try {
+    const cacheKey = `user:profile:${req.user.id}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      console.log('캐시 HIT', req.user.id);
+      return res.json({ success: true, user: JSON.parse(cached) });
+    }
+
+      onsole.log('캐시 MISS', req.user.id);
     const user = await User.findById(req.user.id).select('-password');
     if (!user) {
       return res.status(404).json({
@@ -106,17 +116,14 @@ exports.getProfile = async (req, res) => {
         message: '사용자를 찾을 수 없습니다.'
       });
     }
-
-    res.json({
-      success: true,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        profileImage: user.profileImage
-      }
-    });
-
+    const userProfile = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      profileImage: user.profileImage
+    };
+    await redisClient.setEx(cacheKey, USER_PROFILE_TTL, JSON.stringify(userProfile));
+    res.json({ success: true, user: userProfile });
   } catch (error) {
     console.error('Get profile error:', error);
     res.status(500).json({
@@ -126,7 +133,7 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// 프로필 업데이트
+// 프로필 닉네임 업데이트
 exports.updateProfile = async (req, res) => {
   try {
     const { name } = req.body;
@@ -149,15 +156,20 @@ exports.updateProfile = async (req, res) => {
     user.name = name.trim();
     await user.save();
 
+    // 캐시 무효화 및 최신 정보로 갱신
+    const cacheKey = `user:profile:${req.user.id}`;
+    const userProfile = {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      profileImage: user.profileImage
+    };
+    await redisClient.setEx(cacheKey, USER_PROFILE_TTL, JSON.stringify(userProfile));
+
     res.json({
       success: true,
       message: '프로필이 업데이트되었습니다.',
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        profileImage: user.profileImage
-      }
+      user: userProfile
     });
 
   } catch (error) {
@@ -165,6 +177,55 @@ exports.updateProfile = async (req, res) => {
     res.status(500).json({
       success: false,
       message: '프로필 업데이트 중 오류가 발생했습니다.'
+    });
+  }
+};
+
+// 프로필 비밀번호 변경
+exports.changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+
+    // 1. 필드 유효성 검사
+    if (!currentPassword || !newPassword || currentPassword.trim().length === 0 || newPassword.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: '현재 비밀번호와 새 비밀번호를 모두 입력해주세요.'
+      });
+    }
+
+    // 2. 사용자 조회
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: '사용자를 찾을 수 없습니다.'
+      });
+    }
+
+    // 3. 현재 비밀번호 확인
+    const isMatch = await user.matchPassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: '현재 비밀번호가 일치하지 않습니다.'
+      });
+    }
+
+    // 4. 새 비밀번호 저장
+    user.password = newPassword;
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: '비밀번호가 성공적으로 변경되었습니다.'
+    });
+
+  } catch (error) {
+    console.error('Change password error:', error);
+    return res.status(500).json({
+      success: false,
+      message: '비밀번호 변경 중 오류가 발생했습니다.'
     });
   }
 };
@@ -228,6 +289,10 @@ exports.uploadProfileImage = async (req, res) => {
     user.profileImage = imageUrl;
     await user.save();
 
+    // 캐시 무효화
+    const cacheKey = `user:profile:${req.user.id}`;
+    await redisClient.del(cacheKey);
+
     res.json({
       success: true,
       message: '프로필 이미지가 업데이트되었습니다.',
@@ -275,6 +340,10 @@ exports.deleteProfileImage = async (req, res) => {
       await user.save();
     }
 
+    // 캐시 무효화
+    const cacheKey = `user:profile:${req.user.id}`;
+    await redisClient.del(cacheKey);
+
     res.json({
       success: true,
       message: '프로필 이미지가 삭제되었습니다.'
@@ -312,6 +381,10 @@ exports.deleteAccount = async (req, res) => {
     }
 
     await user.deleteOne();
+
+    // 캐시 무효화
+    const cacheKey = `user:profile:${req.user.id}`;
+    await redisClient.del(cacheKey);
 
     res.json({
       success: true,

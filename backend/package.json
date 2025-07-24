@@ -2,6 +2,9 @@
   "name": "chat-app-backend",
   "version": "1.0.0",
   "description": "Backend for Chat App",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -29,7 +32,5 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
-  },
-  "author": "",
-  "license": "ISC"
+  }
 }

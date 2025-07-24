@@ -4,7 +4,9 @@ const auth = require('../../middleware/auth');
 const Room = require('../../models/Room');
 const User = require('../../models/User');
 const { rateLimit } = require('express-rate-limit');
+const redisClient = require('../../utils/redisClient');
 let io;
+const ROOM_LIST_TTL = 24 * 60 * 60; // 24 hours
 
 // 속도 제한 설정
 const limiter = rateLimit({
@@ -138,14 +140,19 @@ router.get('/', [limiter, auth], async (req, res) => {
     const totalPages = Math.ceil(totalCount / pageSize);
     const hasMore = skip + rooms.length < totalCount;
 
-    // 캐시 설정
-    res.set({
-      'Cache-Control': 'private, max-age=10',
-      'Last-Modified': new Date().toUTCString()
-    });
+    const cacheKey = `room:list:${page}:${pageSize}:${sortField}:${sortOrder}:${req.query.search || ''}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      console.log('캐시 HIT', cacheKey);
+      res.set({
+        'Cache-Control': 'private, max-age=10',
+        'Last-Modified': new Date().toUTCString()
+      });
+      return res.json(cached);
+    }
 
-    // 응답 전송
-    res.json({
+    console.log('캐시 MISS', cacheKey);
+    const response = {
       success: true,
       data: safeRooms,
       metadata: {
@@ -160,7 +167,13 @@ router.get('/', [limiter, auth], async (req, res) => {
           order: sortOrder
         }
       }
+    };
+    await redisClient.setEx(cacheKey, ROOM_LIST_TTL, JSON.stringify(response));
+    res.set({
+      'Cache-Control': 'private, max-age=10',
+      'Last-Modified': new Date().toUTCString()
     });
+    res.json(response);
 
   } catch (error) {
     console.error('방 목록 조회 에러:', error);
@@ -204,6 +217,12 @@ router.post('/', auth, async (req, res) => {
     const populatedRoom = await Room.findById(savedRoom._id)
       .populate('creator', 'name email')
       .populate('participants', 'name email');
+    
+    // roomList 캐시 무효화
+    const keys = await redisClient.keys('room:list:*');
+    if (keys.length > 0) {
+      await redisClient.del(keys);
+    }
     
     // Socket.IO를 통해 새 채팅방 생성 알림
     if (io) {
