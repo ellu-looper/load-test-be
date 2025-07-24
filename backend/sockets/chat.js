@@ -16,7 +16,7 @@ const PUBSUB_CHANNEL = 'chat:messages';
 
 module.exports = function(io) {
   // const connectedUsers = new Map(); // [Redis Migration] Redis로 대체
-  const streamingSessions = new Map();
+  const streamingSessions = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
   // const userRooms = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
   // const messageQueues = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
   // const messageLoadRetries = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
@@ -998,8 +998,8 @@ module.exports = function(io) {
     let accumulatedContent = '';
     const timestamp = new Date();
 
-    // 스트리밍 세션 초기화
-    streamingSessions.set(messageId, {
+    // [Redis Migration] 스트리밍 세션 초기화 (Redis)
+    await redisClient.set('streamingSession:' + messageId, JSON.stringify({
       room,
       aiType: aiName,
       content: '',
@@ -1007,7 +1007,7 @@ module.exports = function(io) {
       timestamp,
       lastUpdate: Date.now(),
       reactions: {}
-    });
+    }), { ttl: 600 }); // 10분 TTL
     
     logDebug('AI response started', {
       messageId,
@@ -1034,11 +1034,13 @@ module.exports = function(io) {
         },
         onChunk: async (chunk) => {
           accumulatedContent += chunk.currentChunk || '';
-          
-          const session = streamingSessions.get(messageId);
+          // [Redis Migration] 세션 업데이트 (Redis)
+          const sessionRaw = await redisClient.get('streamingSession:' + messageId);
+          let session = sessionRaw ? JSON.parse(sessionRaw) : null;
           if (session) {
             session.content = accumulatedContent;
             session.lastUpdate = Date.now();
+            await redisClient.set('streamingSession:' + messageId, JSON.stringify(session), { ttl: 600 });
           }
 
           io.to(room).emit('aiMessageChunk', {
@@ -1052,8 +1054,8 @@ module.exports = function(io) {
           });
         },
         onComplete: async (finalContent) => {
-          // 스트리밍 세션 정리
-          streamingSessions.delete(messageId);
+          // [Redis Migration] 스트리밍 세션 정리 (Redis)
+          await redisClient.del('streamingSession:' + messageId);
 
           // AI 메시지 저장
           const aiMessage = await Message.create({
@@ -1090,8 +1092,8 @@ module.exports = function(io) {
             generationTime: Date.now() - timestamp
           });
         },
-        onError: (error) => {
-          streamingSessions.delete(messageId);
+        onError: async (error) => {
+          await redisClient.del('streamingSession:' + messageId);
           console.error('AI response error:', error);
           
           io.to(room).emit('aiMessageError', {
@@ -1108,7 +1110,7 @@ module.exports = function(io) {
         }
       });
     } catch (error) {
-      streamingSessions.delete(messageId);
+      await redisClient.del('streamingSession:' + messageId);
       console.error('AI service error:', error);
       
       io.to(room).emit('aiMessageError', {
