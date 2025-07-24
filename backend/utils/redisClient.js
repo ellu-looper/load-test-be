@@ -115,51 +115,25 @@ class RedisClient {
       if (this.isCluster && clusterNodes.length > 1) {
         console.log('Connecting to Redis Cluster...', clusterNodes);
         
-        // Dynamic NAT mapping function based on ioredis best practices
-        const createNatMap = async () => {
-          const natMap = {};
-          // Get current cluster info to build dynamic NAT mapping
-          for (let i = 0; i < 6; i++) {
-            const nodeHost = `redis-cluster-${i}.redis-cluster-headless.default.svc.cluster.local`;
-            // Map any potential internal IP to the service DNS name
-            natMap[`*:6379`] = { host: nodeHost, port: 6379 };
-          }
-          return natMap;
-        };
+        // For load testing - use single Redis connection with round-robin
+        // This avoids cluster mode networking issues entirely
+        this.nodeIndex = 0;
+        this.allNodes = clusterNodes;
         
-        this.client = Redis.createCluster({
-          rootNodes: clusterNodes,
-          defaults: {
+        const currentNode = clusterNodes[this.nodeIndex % clusterNodes.length];
+        console.log(`Using Redis node: ${currentNode.host}:${currentNode.port}`);
+        
+        this.client = Redis.createClient({
+          socket: {
+            host: currentNode.host,
+            port: currentNode.port,
             connectTimeout: 10000,
-            lazyConnect: true,
-            keepAlive: 30000,
             family: 4,
-            socket: {
-              family: 4,
-              keepAlive: true
-            }
+            keepAlive: true
           },
-          useReplicas: true,
+          retryDelayOnFailover: 100,
           enableAutoPipelining: true,
-          enableOfflineQueue: false,
-          scaleReads: 'slave',
-          enableReadyCheck: false,  // Disable ready check for NAT environments
-          redisOptions: {
-            enableReadyCheck: false
-          },
-          // Use wildcard NAT mapping for dynamic IPs
-          natMap: (addr) => {
-            console.log('NAT mapping request for:', addr);
-            // Extract port from address
-            const [, port] = addr.split(':');
-            // Find which node this could be by trying to match patterns
-            for (let i = 0; i < 6; i++) {
-              const nodeHost = `redis-cluster-${i}.redis-cluster-headless.default.svc.cluster.local`;
-              return { host: nodeHost, port: parseInt(port) || 6379 };
-            }
-            // Fallback to first node
-            return { host: 'redis-cluster-0.redis-cluster-headless.default.svc.cluster.local', port: 6379 };
-          }
+          maxRetriesPerRequest: 3
         });
       } else {
         console.log('Connecting to Redis single instance...');
