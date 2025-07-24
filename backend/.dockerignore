@@ -1,0 +1,70 @@
+# Node.js
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 로그 파일
+logs
+*.log
+
+# 환경 설정 파일 (보안)
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 테스트
+coverage
+.nyc_output
+test
+tests
+*.test.js
+*.spec.js
+
+# 문서
+README.md
+docs
+
+# CI/CD
+.github
+.gitlab-ci.yml
+Jenkinsfile
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# 빌드 아티팩트
+dist
+build
+
+# 임시 파일
+tmp
+temp
+.tmp
+
+# PM2
+ecosystem.config.js
+
+# 기타
+.editorconfig
+.eslintrc*
+.prettierrc*
+*.md
