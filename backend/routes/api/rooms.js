@@ -97,24 +97,46 @@ router.get('/', [limiter, auth], async (req, res) => {
       filter.name = { $regex: req.query.search, $options: 'i' };
     }
 
-    // 총 문서 수 조회
-    const totalCount = await Room.countDocuments(filter);
+    // 로드 테스트 최적화: 총 문서 수와 데이터를 한 번에 조회하여 쿼리 수 줄이기
+    const [totalCount, rooms] = await Promise.all([
+      Room.countDocuments(filter),
+      Room.aggregate([
+        { $match: filter },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'creator',
+            foreignField: '_id',
+            as: 'creator',
+            pipeline: [{ $project: { name: 1, email: 1, profileImage: 1 } }]
+          }
+        },
+        {
+          $addFields: {
+            creator: { $arrayElemAt: ['$creator', 0] },
+            participantsCount: { $size: '$participants' }
+          }
+        },
+        { $sort: { [sortField]: sortOrder === 'desc' ? -1 : 1 } },
+        { $skip: skip },
+        { $limit: pageSize },
+        {
+          $project: {
+            name: 1,
+            creator: 1,
+            createdAt: 1,
+            hasPassword: 1,
+            participantsCount: 1
+          }
+        }
+      ])
+    ]);
 
-    // 채팅방 목록 조회 with 페이지네이션
-    const rooms = await Room.find(filter)
-      .populate('creator', 'name email')
-      .populate('participants', 'name email')
-      .sort({ [sortField]: sortOrder === 'desc' ? -1 : 1 })
-      .skip(skip)
-      .limit(pageSize)
-      .lean();
-
-    // 안전한 응답 데이터 구성 
+    // 안전한 응답 데이터 구성 - Aggregation 결과 사용
     const safeRooms = rooms.map(room => {
       if (!room) return null;
 
       const creator = room.creator || { _id: 'unknown', name: '알 수 없음', email: '' };
-      const participants = Array.isArray(room.participants) ? room.participants : [];
 
       return {
         _id: room._id?.toString() || 'unknown',
@@ -125,12 +147,7 @@ router.get('/', [limiter, auth], async (req, res) => {
           name: creator.name || '알 수 없음',
           email: creator.email || ''
         },
-        participants: participants.filter(p => p && p._id).map(p => ({
-          _id: p._id.toString(),
-          name: p.name || '알 수 없음',
-          email: p.email || ''
-        })),
-        participantsCount: participants.length,
+        participantsCount: room.participantsCount || 0,
         createdAt: room.createdAt || new Date(),
         isCreator: creator._id?.toString() === req.user.id,
       };

@@ -2,6 +2,18 @@
 const Redis = require('redis');
 const { redisHost, redisPort } = require('../config/keys');
 
+// Redis Cluster configuration
+const isClusterMode = process.env.REDIS_CLUSTER_NODES || process.env.NODE_ENV === 'production';
+const clusterNodes = process.env.REDIS_CLUSTER_NODES ? 
+  process.env.REDIS_CLUSTER_NODES.split(',').map(node => {
+    const [host, port] = node.split(':');
+    return { host, port: parseInt(port) || 6379 };
+  }) : [
+    { host: redisHost || 'redis-node-1', port: redisPort || 6379 },
+    { host: redisHost || 'redis-node-2', port: redisPort + 1 || 6380 },
+    { host: redisHost || 'redis-node-3', port: redisPort + 2 || 6381 }
+  ];
+
 class MockRedisClient {
   constructor() {
     this.store = new Map();
@@ -66,6 +78,7 @@ class RedisClient {
     this.maxRetries = 5;
     this.retryDelay = 5000;
     this.useMock = false;
+    this.isCluster = isClusterMode;
   }
 
   async connect() {
@@ -73,63 +86,102 @@ class RedisClient {
       return this.client;
     }
 
-    // Check if Redis configuration is available
-    if (!redisHost || !redisPort) {
-      console.log('Redis configuration not found, using in-memory mock');
+    // For development without Redis, use mock
+    if (process.env.NODE_ENV === 'development' && (!redisHost || !redisPort)) {
+      console.log('Development mode: Redis configuration not found, using in-memory mock');
       this.client = new MockRedisClient();
       this.isConnected = true;
       this.useMock = true;
       return this.client;
     }
 
-    try {
-      console.log('Connecting to Redis...');
+    // Production requires Redis
+    if (process.env.NODE_ENV === 'production' && (!redisHost || !redisPort) && !process.env.REDIS_CLUSTER_NODES) {
+      throw new Error('Redis configuration is required for production environment');
+    }
 
-      this.client = Redis.createClient({
-        url: `redis://${redisHost}:${redisPort}`,
-        socket: {
-          host: redisHost,
-          port: redisPort,
-          connectTimeout: 5000,
-          reconnectStrategy: (retries) => {
-            if (retries > this.maxRetries) {
-              console.log('Max Redis reconnection attempts reached, switching to in-memory mock');
-              this.client = new MockRedisClient();
-              this.isConnected = true;
-              this.useMock = true;
-              return false;
-            }
-            return Math.min(retries * 50, 2000);
+    try {
+      if (this.isCluster && clusterNodes.length > 1) {
+        console.log('Connecting to Redis Cluster...', clusterNodes);
+        
+        this.client = new Redis.Cluster(clusterNodes, {
+          enableOfflineQueue: false,
+          retryDelayOnFailover: 100,
+          maxRetriesPerRequest: 3,
+          scaleReads: 'slave',
+          redisOptions: {
+            connectTimeout: 5000,
+            lazyConnect: true,
+            keepAlive: 30000,
+            family: 4
           }
-        }
-      });
+        });
+      } else {
+        console.log('Connecting to Redis single instance...');
+        
+        this.client = Redis.createClient({
+          url: `redis://${redisHost}:${redisPort}`,
+          socket: {
+            host: redisHost,
+            port: redisPort,
+            connectTimeout: 5000,
+            keepAlive: 30000,
+            reconnectStrategy: (retries) => {
+              if (retries > this.maxRetries) {
+                console.error('Max Redis reconnection attempts reached');
+                return false;
+              }
+              return Math.min(retries * 100, 3000);
+            }
+          }
+        });
+      }
 
       this.client.on('connect', () => {
-        console.log('Redis Client Connected');
+        console.log(`Redis ${this.isCluster ? 'Cluster' : 'Client'} Connected`);
         this.isConnected = true;
         this.connectionAttempts = 0;
       });
 
+      this.client.on('ready', () => {
+        console.log(`Redis ${this.isCluster ? 'Cluster' : 'Client'} Ready`);
+      });
+
       this.client.on('error', (err) => {
         console.error('Redis Client Error:', err.message);
-        if (!this.useMock) {
-          console.log('Switching to in-memory mock Redis');
+        this.isConnected = false;
+        
+        // Only fallback to mock in development
+        if (process.env.NODE_ENV === 'development' && !this.useMock) {
+          console.log('Development mode: Switching to in-memory mock Redis');
           this.client = new MockRedisClient();
           this.isConnected = true;
           this.useMock = true;
         }
       });
 
+      if (this.isCluster) {
+        this.client.on('node error', (err, node) => {
+          console.error(`Redis cluster node error [${node.host}:${node.port}]:`, err.message);
+        });
+      }
+
       await this.client.connect();
       return this.client;
 
     } catch (error) {
       console.error('Redis connection failed:', error.message);
-      console.log('Using in-memory mock Redis instead');
-      this.client = new MockRedisClient();
-      this.isConnected = true;
-      this.useMock = true;
-      return this.client;
+      
+      // Only fallback to mock in development
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Development mode: Using in-memory mock Redis instead');
+        this.client = new MockRedisClient();
+        this.isConnected = true;
+        this.useMock = true;
+        return this.client;
+      } else {
+        throw error;
+      }
     }
   }
 
