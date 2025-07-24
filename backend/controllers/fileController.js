@@ -7,6 +7,8 @@ const fs = require('fs');
 const { promisify } = require('util');
 const crypto = require('crypto');
 const { uploadDir } = require('../middleware/upload');
+const redisClient = require('../utils/redisClient');
+const FILE_META_TTL = 24 * 60 * 60; // 1일
 
 const fsPromises = {
   writeFile: promisify(fs.writeFile),
@@ -107,17 +109,23 @@ exports.uploadFile = async (req, res) => {
     await file.save();
     await fsPromises.rename(currentPath, newPath);
 
+    // 파일 메타데이터 Redis 캐싱
+    const fileMetaKey = `file:meta:${file._id}`;
+    const fileMeta = {
+      _id: file._id,
+      filename: file.filename,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      user: file.user,
+      uploadDate: file.uploadDate
+    };
+    await redisClient.setEx(fileMetaKey, FILE_META_TTL, JSON.stringify(fileMeta));
+
     res.status(200).json({
       success: true,
       message: '파일 업로드 성공',
-      file: {
-        _id: file._id,
-        filename: file.filename,
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        uploadDate: file.uploadDate
-      }
+      file: fileMeta
     });
 
   } catch (error) {
@@ -284,6 +292,10 @@ exports.deleteFile = async (req, res) => {
     }
 
     await file.deleteOne();
+
+    // 파일 메타데이터 캐시 무효화
+    const fileMetaKey = `file:meta:${file._id}`;
+    await redisClient.del(fileMetaKey);
 
     res.json({
       success: true,

@@ -46,6 +46,9 @@ router.delete('/account',
   userController.deleteAccount
 );
 
+// 멘션용 사용자 목록 조회
+router.get('/mentionable-users', auth, userController.mentionableUsers);
+
 // API 상태 확인
 router.get('/status', (req, res) => {
   res.json({

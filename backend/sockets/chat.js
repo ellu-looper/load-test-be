@@ -679,6 +679,12 @@ module.exports = function(io) {
           }
         ).populate('participants', 'name email profileImage');
 
+        // roomList 캐시 무효화
+        const keys = await redisClient.keys('room:list:*');
+        if (keys.length > 0) {
+          await redisClient.del(keys);
+        }
+
         if (!updatedRoom) {
           console.log(`Room ${roomId} not found during update`);
           return;

@@ -5,6 +5,24 @@ const path = require('path');
 const fs = require('fs').promises;
 const redisClient = require('../utils/redisClient');
 const USER_PROFILE_TTL = 24 * 60 * 60; // 24 hours
+const MENTION_USERS_TTL = 10 * 60; // 10분
+
+// 멘션용 사용자 목록 조회
+exports.mentionableUsers = async (req, res) => {
+  try {
+    const cacheKey = 'mention:users';
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return res.json({ success: true, users: JSON.parse(cached) });
+    }
+    // 전체 사용자 목록(탈퇴/비활성 제외, 이름/프로필만)
+    const users = await User.find({}, 'name profileImage').lean();
+    await redisClient.setEx(cacheKey, MENTION_USERS_TTL, JSON.stringify(users));
+    res.json({ success: true, users });
+  } catch (error) {
+    res.status(500).json({ success: false, message: '사용자 목록 조회 중 오류', error: error.message });
+  }
+};
 
 // 회원가입
 exports.register = async (req, res) => {
@@ -77,6 +95,9 @@ exports.register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     newUser.password = await bcrypt.hash(password, salt);
     await newUser.save();
+
+    // mention:users 캐시 무효화
+    await redisClient.del('mention:users');
 
     res.status(201).json({
       success: true,
@@ -165,6 +186,9 @@ exports.updateProfile = async (req, res) => {
       profileImage: user.profileImage
     };
     await redisClient.setEx(cacheKey, USER_PROFILE_TTL, JSON.stringify(userProfile));
+
+    // mention:users 캐시 무효화
+    await redisClient.del('mention:users');
 
     res.json({
       success: true,
@@ -385,6 +409,8 @@ exports.deleteAccount = async (req, res) => {
     // 캐시 무효화
     const cacheKey = `user:profile:${req.user.id}`;
     await redisClient.del(cacheKey);
+    // mention:users 캐시 무효화
+    await redisClient.del('mention:users');
 
     res.json({
       success: true,

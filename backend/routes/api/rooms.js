@@ -307,6 +307,11 @@ router.post('/:roomId/join', auth, async (req, res) => {
     if (!room.participants.includes(req.user.id)) {
       room.participants.push(req.user.id);
       await room.save();
+      // roomList 캐시 무효화
+      const keys = await redisClient.keys('room:list:*');
+      if (keys.length > 0) {
+        await redisClient.del(keys);
+      }
     }
 
     const populatedRoom = await room.populate('participants', 'name email');
