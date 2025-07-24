@@ -2,16 +2,21 @@
 const Redis = require('redis');
 const { redisHost, redisPort } = require('../config/keys');
 
-// Redis Cluster configuration
+// Redis Cluster configuration - Force cluster mode in production
 const isClusterMode = process.env.REDIS_CLUSTER_NODES || process.env.NODE_ENV === 'production';
+console.log('Redis cluster mode detection:', { 
+  isClusterMode, 
+  hasClusterNodes: !!process.env.REDIS_CLUSTER_NODES,
+  nodeEnv: process.env.NODE_ENV 
+});
 const clusterNodes = process.env.REDIS_CLUSTER_NODES ? 
   process.env.REDIS_CLUSTER_NODES.split(',').map(node => {
     const [host, port] = node.split(':');
     return { host, port: parseInt(port) || 6379 };
   }) : [
-    { host: redisHost || 'redis-node-1', port: redisPort || 6379 },
-    { host: redisHost || 'redis-node-2', port: redisPort + 1 || 6380 },
-    { host: redisHost || 'redis-node-3', port: redisPort + 2 || 6381 }
+    { host: 'redis-cluster-0.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+    { host: 'redis-cluster-1.redis-cluster-headless.default.svc.cluster.local', port: 6379 },
+    { host: 'redis-cluster-2.redis-cluster-headless.default.svc.cluster.local', port: 6379 }
   ];
 
 class MockRedisClient {
@@ -110,17 +115,22 @@ class RedisClient {
       if (this.isCluster && clusterNodes.length > 1) {
         console.log('Connecting to Redis Cluster...', clusterNodes);
         
-        this.client = new Redis.Cluster(clusterNodes, {
-          enableOfflineQueue: false,
-          retryDelayOnFailover: 100,
-          maxRetriesPerRequest: 3,
-          scaleReads: 'slave',
-          redisOptions: {
+        this.client = Redis.createCluster({
+          rootNodes: clusterNodes,
+          defaults: {
             connectTimeout: 5000,
             lazyConnect: true,
             keepAlive: 30000,
-            family: 4
-          }
+            family: 4,
+            socket: {
+              family: 4,
+              keepAlive: true
+            }
+          },
+          useReplicas: true,
+          enableAutoPipelining: true,
+          enableOfflineQueue: false,
+          scaleReads: 'slave'
         });
       } else {
         console.log('Connecting to Redis single instance...');
@@ -320,12 +330,5 @@ class RedisClient {
 }
 
 const redisClient = new RedisClient();
-const redisPub = Redis.createClient({ url: `redis://${redisHost}:${redisPort}` });
-const redisSub = Redis.createClient({ url: `redis://${redisHost}:${redisPort}` });
-
-redisPub.connect().catch(console.error);
-redisSub.connect().catch(console.error);
 
 module.exports = redisClient;
-module.exports.redisPub = redisPub;
-module.exports.redisSub = redisSub;
