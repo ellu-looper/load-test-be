@@ -1046,6 +1046,12 @@ module.exports = function(io) {
             }
           });
 
+          const cacheKey = `room:messages:${room}`;
+          let cached = await redisClient.get(cacheKey) || [];
+          cached.push(aiMessage.toObject ? aiMessage.toObject() : aiMessage);
+          if (cached.length > RECENT_MESSAGE_CACHE) cached = cached.slice(-RECENT_MESSAGE_CACHE);
+          await redisClient.setEx(cacheKey, MESSAGES_TTL, JSON.stringify(cached));
+
           // 완료 메시지 전송
           io.to(room).emit('aiMessageComplete', {
             messageId,
