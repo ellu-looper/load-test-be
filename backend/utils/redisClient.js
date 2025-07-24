@@ -115,25 +115,18 @@ class RedisClient {
       if (this.isCluster && clusterNodes.length > 1) {
         console.log('Connecting to Redis Cluster...', clusterNodes);
         
-        // For load testing - use single Redis connection with round-robin
-        // This avoids cluster mode networking issues entirely
-        this.nodeIndex = 0;
-        this.allNodes = clusterNodes;
-        
-        const currentNode = clusterNodes[this.nodeIndex % clusterNodes.length];
-        console.log(`Using Redis node: ${currentNode.host}:${currentNode.port}`);
-        
-        this.client = Redis.createClient({
-          socket: {
-            host: currentNode.host,
-            port: currentNode.port,
+        this.client = Redis.createCluster({
+          rootNodes: clusterNodes,
+          defaults: {
             connectTimeout: 10000,
-            family: 4,
-            keepAlive: true
+            lazyConnect: true,
+            keepAlive: 30000,
+            family: 4
           },
-          retryDelayOnFailover: 100,
+          useReplicas: true,
           enableAutoPipelining: true,
-          maxRetriesPerRequest: 3
+          enableOfflineQueue: false,
+          enableReadyCheck: false
         });
       } else {
         console.log('Connecting to Redis single instance...');
