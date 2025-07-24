@@ -169,6 +169,8 @@ router.get('/', [limiter, auth], async (req, res) => {
     }
 
     console.log('캐시 MISS', cacheKey);
+    console.log('Returning rooms:', safeRooms.length, 'total in DB:', totalCount);
+    
     const response = {
       success: true,
       data: safeRooms,
@@ -231,9 +233,12 @@ router.post('/', auth, async (req, res) => {
     });
 
     const savedRoom = await newRoom.save();
+    console.log('Room saved to MongoDB:', savedRoom._id, savedRoom.name);
+    
     const populatedRoom = await Room.findById(savedRoom._id)
       .populate('creator', 'name email')
       .populate('participants', 'name email');
+    console.log('Room populated successfully:', populatedRoom._id);
     
     // roomList 캐시 무효화
     const keys = await redisClient.keys('room:list:*');
