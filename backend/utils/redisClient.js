@@ -68,6 +68,12 @@ class MockRedisClient {
     this.store.clear();
     console.log('Mock Redis connection closed');
   }
+
+  async keys(pattern) {
+    // 간단한 glob 패턴 매칭 (실제 Redis와 다를 수 있음)
+    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+    return Array.from(this.store.keys()).filter(key => regex.test(key));
+  }
 }
 
 class RedisClient {
@@ -294,6 +300,21 @@ class RedisClient {
       } catch (error) {
         console.error('Redis quit error:', error);
       }
+    }
+  }
+
+  async keys(pattern) {
+    try {
+      if (!this.isConnected) {
+        await this.connect();
+      }
+      if (this.useMock) {
+        return await this.client.keys(pattern);
+      }
+      return await this.client.keys(pattern);
+    } catch (error) {
+      console.error('Redis keys error:', error);
+      throw error;
     }
   }
 }

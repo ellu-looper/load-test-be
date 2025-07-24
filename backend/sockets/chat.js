@@ -15,11 +15,6 @@ const { redisPub, redisSub } = require('../utils/redisClient');
 const PUBSUB_CHANNEL = 'chat:messages';
 
 module.exports = function(io) {
-  // const connectedUsers = new Map(); // [Redis Migration] Redis로 대체
-  const streamingSessions = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
-  // const userRooms = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
-  // const messageQueues = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
-  // const messageLoadRetries = new Map(); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
   const BATCH_SIZE = 30;  // 한 번에 로드할 메시지 수
   const LOAD_DELAY = 300; // 메시지 로드 딜레이 (ms)
   const MAX_RETRIES = 3;  // 최대 재시도 횟수
@@ -508,26 +503,13 @@ module.exports = function(io) {
         const messageLoadResult = await loadMessages(socket, roomId);
         const { messages, hasMore, oldestTimestamp } = messageLoadResult;
 
-        // 활성 스트리밍 메시지 조회
-        const activeStreams = Array.from(streamingSessions.values())
-          .filter(session => session.room === roomId)
-          .map(session => ({
-            _id: session.messageId,
-            type: 'ai',
-            aiType: session.aiType,
-            content: session.content,
-            timestamp: session.timestamp,
-            isStreaming: true
-          }));
-
         // 이벤트 발송
         socket.emit('joinRoomSuccess', {
           roomId,
           participants: room.participants,
           messages,
           hasMore,
-          oldestTimestamp,
-          activeStreams
+          oldestTimestamp
         });
 
         io.to(roomId).emit('message', joinMessage);
@@ -776,13 +758,6 @@ module.exports = function(io) {
           return;
         }
 
-        // 스트리밍 세션 정리
-        for (const [messageId, session] of streamingSessions.entries()) {
-          if (session.room === roomId && session.userId === socket.user.id) {
-            streamingSessions.delete(messageId);
-          }
-        }
-
         // 메시지 큐 정리
         const queueKey = `${roomId}:${socket.user.id}`;
         // messageQueues.delete(queueKey); // [Redis Migration] 기존 Map은 주석처리, Redis로 대체
@@ -824,13 +799,7 @@ module.exports = function(io) {
           const retryKey = key.replace('messageQueue:', 'messageLoadRetry:');
           await redisClient.del(retryKey);
         }
-        
-        // 스트리밍 세션 정리
-        for (const [messageId, session] of streamingSessions.entries()) {
-          if (session.userId === socket.user.id) {
-            streamingSessions.delete(messageId);
-          }
-        }
+    
 
         // 현재 방에서 자동 퇴장 처리
         if (roomId) {
@@ -999,15 +968,19 @@ module.exports = function(io) {
     const timestamp = new Date();
 
     // [Redis Migration] 스트리밍 세션 초기화 (Redis)
-    await redisClient.set('streamingSession:' + messageId, JSON.stringify({
-      room,
-      aiType: aiName,
-      content: '',
-      messageId,
-      timestamp,
-      lastUpdate: Date.now(),
-      reactions: {}
-    }), { ttl: 600 }); // 10분 TTL
+    await redisClient.setEx(
+      'streamingSession:' + messageId,
+      600,
+      JSON.stringify({
+        room,
+        aiType: aiName,
+        content: '',
+        messageId,
+        timestamp,
+        lastUpdate: Date.now(),
+        reactions: {}
+      })
+    ); // 10분 TTL
     
     logDebug('AI response started', {
       messageId,
@@ -1036,11 +1009,11 @@ module.exports = function(io) {
           accumulatedContent += chunk.currentChunk || '';
           // [Redis Migration] 세션 업데이트 (Redis)
           const sessionRaw = await redisClient.get('streamingSession:' + messageId);
-          let session = sessionRaw ? JSON.parse(sessionRaw) : null;
+          let session = sessionRaw;
           if (session) {
             session.content = accumulatedContent;
             session.lastUpdate = Date.now();
-            await redisClient.set('streamingSession:' + messageId, JSON.stringify(session), { ttl: 600 });
+            await redisClient.setEx('streamingSession:' + messageId, 600, JSON.stringify(session));
           }
 
           io.to(room).emit('aiMessageChunk', {
