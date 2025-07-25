@@ -73,8 +73,62 @@ app.get('/health', (req, res) => {
 // API 라우트 마운트
 app.use('/api', routes);
 
+// Socket.IO Redis adapter for multi-pod support
+const { createAdapter } = require('@socket.io/redis-adapter');
+const Redis = require('ioredis');
+
+// Create Redis pub/sub clients for Socket.IO adapter
+const createRedisClient = () => {
+  const isClusterMode = process.env.REDIS_CLUSTER_NODES || process.env.NODE_ENV === 'production';
+  
+  if (isClusterMode && process.env.REDIS_CLUSTER_NODES) {
+    const clusterNodes = process.env.REDIS_CLUSTER_NODES.split(',').map(node => {
+      const [host, port] = node.split(':');
+      return { host, port: parseInt(port) || 6379 };
+    });
+    
+    return new Redis.Cluster(clusterNodes, {
+      redisOptions: {
+        family: 4,
+        keepAlive: 30000,
+        connectTimeout: 10000
+      },
+      enableOfflineQueue: true,
+      enableReadyCheck: true,
+      scaleReads: 'slave',
+      maxRetriesPerRequest: 3
+    });
+  } else {
+    // Fallback to single Redis instance or default cluster
+    const { redisHost, redisPort } = require('./config/keys');
+    return new Redis({
+      host: redisHost || 'redis-cluster-0.redis-cluster-headless.default.svc.cluster.local',
+      port: redisPort || 6379,
+      family: 4,
+      keepAlive: 30000,
+      connectTimeout: 5000,
+      retryDelayOnFailover: 100,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 3
+    });
+  }
+};
+
 // Socket.IO 설정
 const io = socketIO(server, { cors: corsOptions });
+
+// Configure Redis adapter for Socket.IO clustering
+try {
+  const pubClient = createRedisClient();
+  const subClient = pubClient.duplicate();
+  
+  io.adapter(createAdapter(pubClient, subClient));
+  console.log('Socket.IO Redis adapter configured for multi-pod support');
+} catch (error) {
+  console.warn('Failed to configure Redis adapter, falling back to memory adapter:', error.message);
+  console.warn('Multi-pod Socket.IO will not work properly without Redis adapter');
+}
+
 require('./sockets/chat')(io);
 
 // Socket.IO 객체 전달
