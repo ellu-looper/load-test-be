@@ -119,6 +119,19 @@ router.get('/', [limiter, auth], async (req, res) => {
       filter.name = { $regex: req.query.search, $options: 'i' };
     }
 
+    // Check cache FIRST before database query
+    const cacheKey = `room:list:${page}:${pageSize}:${sortField}:${sortOrder}:${req.query.search || ''}`;
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      console.log('캐시 HIT', cacheKey);
+      res.set({
+        'Cache-Control': 'private, max-age=10',
+        'Last-Modified': new Date().toUTCString()
+      });
+      return res.json(cached);
+    }
+    console.log('캐시 MISS', cacheKey);
+
     // 로드 테스트 최적화: 총 문서 수와 데이터를 한 번에 조회하여 쿼리 수 줄이기
     const [totalCount, rooms] = await Promise.all([
       Room.countDocuments(filter),
@@ -179,18 +192,6 @@ router.get('/', [limiter, auth], async (req, res) => {
     const totalPages = Math.ceil(totalCount / pageSize);
     const hasMore = skip + rooms.length < totalCount;
 
-    const cacheKey = `room:list:${page}:${pageSize}:${sortField}:${sortOrder}:${req.query.search || ''}`;
-    const cached = await redisClient.get(cacheKey);
-    if (cached) {
-      console.log('캐시 HIT', cacheKey);
-      res.set({
-        'Cache-Control': 'private, max-age=10',
-        'Last-Modified': new Date().toUTCString()
-      });
-      return res.json(cached);
-    }
-
-    console.log('캐시 MISS', cacheKey);
     console.log('Returning rooms:', safeRooms.length, 'total in DB:', totalCount);
     
     const response = {
