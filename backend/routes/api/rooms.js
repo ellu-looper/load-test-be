@@ -210,6 +210,7 @@ router.get('/', [limiter, auth], async (req, res) => {
       }
     };
     await redisClient.setEx(cacheKey, ROOM_LIST_TTL, JSON.stringify(response));
+    await addRoomListCacheKey(cacheKey);
     res.set({
       'Cache-Control': 'private, max-age=10',
       'Last-Modified': new Date().toUTCString()
