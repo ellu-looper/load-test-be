@@ -6,7 +6,7 @@ const User = require('../../models/User');
 const { rateLimit } = require('express-rate-limit');
 const redisClient = require('../../utils/redisClient');
 let io;
-const ROOM_LIST_TTL = 24 * 60 * 60; // 24 hours
+const ROOM_LIST_TTL = 30; // 30 seconds - much shorter for immediate updates
 
 // 속도 제한 설정
 const limiter = rateLimit({
