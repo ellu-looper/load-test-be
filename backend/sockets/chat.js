@@ -108,7 +108,20 @@ module.exports = function(io) {
             }
           },
           
-          // 5. 배열 필드 단일 객체로 변환
+          // 5. Readers 정보 조인 (읽음 상태)
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'readers.userId',
+              foreignField: '_id',
+              as: 'readersData',
+              pipeline: [
+                { $project: { name: 1, email: 1 } }
+              ]
+            }
+          },
+          
+          // 6. 배열 필드 단일 객체로 변환
           {
             $addFields: {
               sender: { $arrayElemAt: ['$sender', 0] },
@@ -116,7 +129,7 @@ module.exports = function(io) {
             }
           },
           
-          // 6. 불필요한 필드 제거
+          // 7. 불필요한 필드 제거
           {
             $project: {
               __v: 0,
@@ -653,6 +666,15 @@ module.exports = function(io) {
               foreignField: '_id',
               as: 'file',
               pipeline: [{ $project: { filename: 1, originalname: 1, mimetype: 1, size: 1 } }]
+            }
+          },
+          {
+            $lookup: {
+              from: 'users',
+              localField: 'readers.userId',
+              foreignField: '_id',
+              as: 'readersData',
+              pipeline: [{ $project: { name: 1, email: 1 } }]
             }
           },
           {
