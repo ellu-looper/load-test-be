@@ -104,17 +104,12 @@ app.use((err, req, res, next) => {
 const mongooseOptions = {
   maxPoolSize: 40,          // Optimal: 40 per pod * 40 pods = 1600 total (80% of 2000 MongoDB capacity)
   minPoolSize: 5,           // Keep minimum connections ready for immediate use
-  maxIdleTimeMS: 60000,     // Keep connections longer in high-load environment
-  serverSelectionTimeoutMS: 10000,  // Allow time for server selection in pod environment
-  socketTimeoutMS: 30000,   // Shorter socket timeout for faster failover
-  bufferCommands: false,    // Don't buffer commands when disconnected
+  maxIdleTimeMS: 30000,     // Close idle connections after 30s
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  bufferCommands: false,
   heartbeatFrequencyMS: 10000,
-  readPreference: 'secondaryPreferred', // Use secondary for reads when available
-  retryWrites: true,        // Retry writes on transient errors
-  retryReads: true,         // Retry reads on transient errors
-  connectTimeoutMS: 10000,  // Connection establishment timeout
-  compressors: ['snappy'],  // Use snappy to match MongoDB's block compressor
-  zlibCompressionLevel: 6   // Balanced compression level
+  readPreference: 'secondaryPreferred' // Use secondary for reads when available
 };
 
 // 서버 시작
