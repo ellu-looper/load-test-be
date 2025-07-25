@@ -100,16 +100,21 @@ app.use((err, req, res, next) => {
   });
 });
 
-// MongoDB connection with optimized pooling for load testing
+// MongoDB connection optimized for 30-40 pods connecting to 2 MongoDB pods (maxConns=1000 each)
 const mongooseOptions = {
-  maxPoolSize: 200,         // Increased for extreme load testing 
-  minPoolSize: 10,          // Higher minimum for better performance
-  maxIdleTimeMS: 30000,     // Close idle connections after 30s
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-  bufferCommands: false,
+  maxPoolSize: 40,          // Optimal: 40 per pod * 40 pods = 1600 total (80% of 2000 MongoDB capacity)
+  minPoolSize: 5,           // Keep minimum connections ready for immediate use
+  maxIdleTimeMS: 60000,     // Keep connections longer in high-load environment
+  serverSelectionTimeoutMS: 10000,  // Allow time for server selection in pod environment
+  socketTimeoutMS: 30000,   // Shorter socket timeout for faster failover
+  bufferCommands: false,    // Don't buffer commands when disconnected
   heartbeatFrequencyMS: 10000,
-  readPreference: 'secondaryPreferred' // Use secondary for reads when available
+  readPreference: 'secondaryPreferred', // Use secondary for reads when available
+  retryWrites: true,        // Retry writes on transient errors
+  retryReads: true,         // Retry reads on transient errors
+  connectTimeoutMS: 10000,  // Connection establishment timeout
+  compressors: ['snappy'],  // Use snappy to match MongoDB's block compressor
+  zlibCompressionLevel: 6   // Balanced compression level
 };
 
 // 서버 시작
