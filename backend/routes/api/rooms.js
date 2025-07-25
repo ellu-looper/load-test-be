@@ -28,6 +28,28 @@ const initializeSocket = (socketIO) => {
   io = socketIO;
 };
 
+// Utility function to add a cache key to the set
+async function addRoomListCacheKey(key) {
+  try {
+    await redisClient.setOps.sadd('room:list:{all}:keys', key);
+  } catch (err) {
+    console.error('Failed to add cache key to set:', err);
+  }
+}
+
+// Utility function to invalidate all room list cache keys
+async function invalidateRoomListCache() {
+  try {
+    const keys = await redisClient.setOps.smembers('room:list:{all}:keys');
+    if (keys && keys.length > 0) {
+      await redisClient.del(...keys);
+      await redisClient.del('room:list:{all}:keys');
+    }
+  } catch (err) {
+    console.error('Failed to invalidate room list cache:', err);
+  }
+}
+
 // 서버 상태 확인
 router.get('/health', async (req, res) => {
   try {
@@ -240,11 +262,8 @@ router.post('/', auth, async (req, res) => {
       .populate('participants', 'name email');
     console.log('Room populated successfully:', populatedRoom._id);
     
-    // roomList 캐시 무효화
-    const keys = await redisClient.keys('room:list:*');
-    if (keys.length > 0) {
-      await redisClient.del(keys);
-    }
+    // roomList 캐시 무효화 (cluster-safe)
+    await invalidateRoomListCache();
     
     // Socket.IO를 통해 새 채팅방 생성 알림
     if (io) {
@@ -329,11 +348,8 @@ router.post('/:roomId/join', auth, async (req, res) => {
     if (!room.participants.includes(req.user.id)) {
       room.participants.push(req.user.id);
       await room.save();
-      // roomList 캐시 무효화
-      const keys = await redisClient.keys('room:list:*');
-      if (keys.length > 0) {
-        await redisClient.del(keys);
-      }
+      // roomList 캐시 무효화 (cluster-safe)
+      await invalidateRoomListCache();
     }
 
     const populatedRoom = await room.populate('participants', 'name email');

@@ -770,11 +770,8 @@ module.exports = function(io) {
           }
         ).populate('participants', 'name email profileImage');
 
-        // roomList 캐시 무효화
-        const keys = await redisClient.keys('room:list:*');
-        if (keys.length > 0) {
-          await redisClient.del(keys);
-        }
+        // roomList 캐시 무효화 (cluster-safe)
+        await invalidateRoomListCache();
 
         if (!updatedRoom) {
           console.log(`Room ${roomId} not found during update`);
@@ -815,13 +812,15 @@ module.exports = function(io) {
         const roomId = await redisClient.get('userRoom:' + socket.user.id);
         await redisClient.del('userRoom:' + socket.user.id);
 
-        // 메시지 큐 정리
-        const userQueues = (await redisClient.keys('messageQueue:*:' + socket.user.id)) || [];
+        // 메시지 큐 정리 (cluster-safe)
+        const queueSetKey = `messageQueue:${socket.user.id}:keys`;
+        const userQueues = (await redisClient.setOps.smembers(queueSetKey)) || [];
         for (const key of userQueues) {
           await redisClient.del(key);
           const retryKey = key.replace('messageQueue:', 'messageLoadRetry:');
           await redisClient.del(retryKey);
         }
+        await redisClient.del(queueSetKey);
     
 
         // 현재 방에서 자동 퇴장 처리

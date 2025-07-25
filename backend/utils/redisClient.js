@@ -24,6 +24,21 @@ class MockRedisClient {
     this.store = new Map();
     this.isConnected = true;
     console.log('Using in-memory Redis mock (Redis server not available)');
+    this.setOps = {
+      sadd: async (setKey, value) => {
+        let set = this.store.get(setKey);
+        if (!set) {
+          set = new Set();
+          this.store.set(setKey, set);
+        }
+        set.add(value);
+        return 1;
+      },
+      smembers: async (setKey) => {
+        const set = this.store.get(setKey);
+        return set ? Array.from(set) : [];
+      }
+    };
   }
 
   async connect() {
@@ -90,6 +105,18 @@ class RedisClient {
     this.retryDelay = 5000;
     this.useMock = false;
     this.isCluster = isClusterMode;
+    this.setOps = {
+      sadd: async (setKey, value) => {
+        if (!this.isConnected) await this.connect();
+        if (this.useMock) return this.client.setOps.sadd(setKey, value);
+        return this.client.sadd(setKey, value);
+      },
+      smembers: async (setKey) => {
+        if (!this.isConnected) await this.connect();
+        if (this.useMock) return this.client.setOps.smembers(setKey);
+        return this.client.smembers(setKey);
+      }
+    };
   }
 
   async connect() {
